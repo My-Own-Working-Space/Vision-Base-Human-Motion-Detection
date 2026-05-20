@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+*.log
+
+# Data & Models
+dataset/
+runs/
+*.pth
+*.pt
+
+# Environment & IDE
+.env
+.vscode/
+.idea/
+
+# .NET (ASP.NET Core)
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+*.sln.docstates
+*.userprefs
+*.mono
+*.csproj.user
+
+# OS
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/
