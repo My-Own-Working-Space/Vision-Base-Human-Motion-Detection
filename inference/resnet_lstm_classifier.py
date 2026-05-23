@@ -62,7 +62,7 @@ class ResNetLSTMClassifier:
 
         self.track_buffers = {}
         self.track_missing_count = {}
-        self.grace_period = 90
+        self.grace_period = 30
 
         self.transform = transforms.Compose([
             transforms.Resize((112, 112)),
@@ -85,6 +85,8 @@ class ResNetLSTMClassifier:
         self.track_buffers[track_id].append(feat)
         self.track_missing_count[track_id] = 0
         buf_len = len(self.track_buffers[track_id])
+
+        print(f"TrackID={track_id}, Buffer={buf_len}")
 
         if buf_len < self.sequence_length:
             return 'Buffering...', 0.0, buf_len

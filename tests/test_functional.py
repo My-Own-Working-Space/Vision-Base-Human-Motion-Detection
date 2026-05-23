@@ -106,7 +106,9 @@ class TestFunctionalAI(unittest.TestCase):
 
         # Test buffer cleanup
         self.assertIn(track_id, self.classifier.track_buffers)
-        self.classifier.cleanup_tracks(active_ids={1, 2, 3})  # 999 is not active anymore
+        # Exceed grace period to trigger deletion
+        for _ in range(self.classifier.grace_period + 5):
+            self.classifier.cleanup_tracks(active_ids={1, 2, 3})
         self.assertNotIn(track_id, self.classifier.track_buffers, "Stale track buffer was not cleared.")
 
 if __name__ == '__main__':

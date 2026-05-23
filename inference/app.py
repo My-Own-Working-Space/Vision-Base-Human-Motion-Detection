@@ -126,6 +126,7 @@ def generate_frames():
         if state == "IS_PROCESSING":
             results = yolo.track(frame)
             crops = yolo.get_tracked_crops(frame, results)
+            print(f"Frame #{frame_idx}: Detected {len(crops)} person(s)")
             active_ids = set()
 
             for item in crops:
