@@ -211,7 +211,7 @@ def generate_frames():
                 state_start_time = time.monotonic()
                 cached_labels.clear()
                 if classifier:
-                    classifier.clear_buffer()
+                    classifier.clear_buffer(reason=f"State Machine transition from SLEEPING to IS_PROCESSING due to {reason}")
                 print(f"[StateMachine] Waking up due to {reason}.")
 
         _draw_pipeline_hud(frame, frame_idx, num_tracks, state)

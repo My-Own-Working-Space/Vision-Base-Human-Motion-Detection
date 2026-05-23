@@ -77,7 +77,14 @@ class ResNetLSTMClassifier:
         return feat.squeeze(0)                  
 
     def predict(self, pil_image: Image.Image, track_id: int) -> tuple[str, float, int]:
-        feat = self._extract_feature(pil_image)
+        try:
+            feat = self._extract_feature(pil_image)
+        except Exception as e:
+            print(f"[ResetReason] TrackID={track_id} feature extraction failed. Resetting buffer. Exception: {e}")
+            if track_id in self.track_buffers:
+                del self.track_buffers[track_id]
+                del self.track_missing_count[track_id]
+            return 'Buffering...', 0.0, 0
 
         if track_id not in self.track_buffers:
             self.track_buffers[track_id] = deque(maxlen=self.sequence_length)
@@ -91,15 +98,24 @@ class ResNetLSTMClassifier:
         if buf_len < self.sequence_length:
             return 'Buffering...', 0.0, buf_len
 
-        seq = torch.stack(list(self.track_buffers[track_id]), dim=0).unsqueeze(0).to(self.device)
+        try:
+            seq = torch.stack(list(self.track_buffers[track_id]), dim=0).unsqueeze(0).to(self.device)
 
-        with torch.no_grad():
-            outputs, _ = self.temporal_model(seq)
-            probs = torch.softmax(outputs, dim=1)
-            confidence, predicted = torch.max(probs, dim=1)
+            with torch.no_grad():
+                outputs, _ = self.temporal_model(seq)
+                probs = torch.softmax(outputs, dim=1)
+                confidence, predicted = torch.max(probs, dim=1)
 
-        label = self.CLASS_NAMES[predicted.item()]
-        return label, confidence.item(), buf_len
+            label = self.CLASS_NAMES[predicted.item()]
+            print(f"[BufferStatus] TrackID={track_id} predicted successfully: {label} ({confidence.item():.1%}). Sliding window preserved (buf_len={buf_len}). No reset.")
+            return label, confidence.item(), buf_len
+
+        except Exception as e:
+            print(f"[ResetReason] TrackID={track_id} temporal prediction failed. Resetting buffer. Exception: {e}")
+            if track_id in self.track_buffers:
+                del self.track_buffers[track_id]
+                del self.track_missing_count[track_id]
+            return 'Buffering...', 0.0, 0
 
     def cleanup_tracks(self, active_ids: set[int]) -> None:
         to_delete = []
@@ -111,9 +127,11 @@ class ResNetLSTMClassifier:
             else:
                 self.track_missing_count[tid] = 0
         for tid in to_delete:
+            print(f"[ResetReason] Deleted TrackID={tid} from buffer. Reason: lost tracking/disappeared (missing for {self.track_missing_count[tid]} frames > grace_period {self.grace_period})")
             del self.track_buffers[tid]
             del self.track_missing_count[tid]
 
-    def clear_buffer(self) -> None:
+    def clear_buffer(self, reason: str = "State Machine wakeup/transition") -> None:
+        print(f"[ResetReason] Cleared all buffers. Reason: {reason}")
         self.track_buffers.clear()
         self.track_missing_count.clear()
