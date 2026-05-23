@@ -1,5 +1,7 @@
 from ultralytics import YOLO
 import cv2
+import os
+import torch
 from PIL import Image
 
 
@@ -8,11 +10,40 @@ class YOLODetector:
     YOLOv8 person detector with built-in ByteTrack multi-object tracking.
     Each detected person receives a persistent track_id across frames,
     which the ResNetLSTMClassifier uses to maintain per-person frame buffers.
+
+    Supports hardware-aware model loading:
+      - embedded mode: tries TensorRT engines (int8 → fp16) then falls back to .pt
+      - server mode:   loads standard .pt model
     """
 
-    def __init__(self, model_path: str = 'yolov8n.pt'):
-        self.model = YOLO(model_path)
-        print(f"[YOLODetector] Loaded model: {model_path}")
+    def __init__(self, model_path: str = 'yolov8n.pt', device_mode: str = 'server'):
+        self.device_mode = device_mode
+        actual_model = self._resolve_model(model_path)
+        self.model = YOLO(actual_model)
+        self.device = self._resolve_device()
+        print(f"[YOLODetector] Loaded model: {actual_model} | device: {self.device} | mode: {device_mode}")
+
+    def _resolve_model(self, base_path: str) -> str:
+        """Hardware-aware model selection for embedded devices."""
+        if self.device_mode != 'embedded':
+            return base_path
+
+        model_dir = os.path.dirname(base_path) or '.'
+        # Priority: INT8 TensorRT → FP16 TensorRT → original .pt
+        for engine_name in ['yolov8n_int8.engine', 'yolov8n_fp16.engine']:
+            engine_path = os.path.join(model_dir, engine_name)
+            if os.path.exists(engine_path):
+                print(f"[YOLODetector] Found TensorRT engine: {engine_path}")
+                return engine_path
+
+        print(f"[YOLODetector] No TensorRT engine found, falling back to {base_path}")
+        return base_path
+
+    def _resolve_device(self) -> str:
+        """Select best available device."""
+        if self.device_mode == 'embedded' and torch.cuda.is_available():
+            return 'cuda'
+        return 'cpu'
 
     # New: ByteTrack tracking
     def track(self, frame):
@@ -20,12 +51,15 @@ class YOLODetector:
         Run YOLOv8 + ByteTrack on a frame.
         classes=[0] restricts detection to 'person' only (COCO class 0).
         persist=True keeps the tracker state between calls.
+        Uses custom ByteTrack config with extended track_buffer for stable IDs.
         """
+        tracker_cfg = os.path.join(os.path.dirname(__file__), 'bytetrack_custom.yaml')
         results = self.model.track(
             frame,
             persist=True,
-            tracker='bytetrack.yaml',
+            tracker=tracker_cfg,
             classes=[0],             # person only
+            conf=0.15,               # Lower confidence → detect people more reliably
             verbose=False
         )
         return results[0]

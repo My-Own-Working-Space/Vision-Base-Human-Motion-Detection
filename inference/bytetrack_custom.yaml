@@ -1,0 +1,10 @@
+# Custom ByteTrack config — optimized for IP camera with unstable detection
+# Keeps tracks alive much longer to prevent ID resets on flickering detections
+
+tracker_type: bytetrack
+track_high_thresh: 0.15    # Lower threshold → detect people more aggressively
+track_low_thresh: 0.05     # Much lower second-stage → recover lost tracks more often
+new_track_thresh: 0.4      # Higher → don't create new tracks too easily (prevents ID spam)
+track_buffer: 120          # Keep lost tracks alive for 120 frames (~4-8 seconds)
+match_thresh: 0.85         # Slightly higher → stricter matching reduces ID switches
+fuse_score: True

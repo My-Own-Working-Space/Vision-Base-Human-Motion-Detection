@@ -76,6 +76,9 @@ class ResNetLSTMClassifier:
 
         # Per-track sliding window buffers   
         self.track_buffers: dict[int, deque] = {}
+        # Grace period: count how many consecutive frames each track is missing
+        self.track_missing_count: dict[int, int] = {}
+        self.grace_period = 90  # Keep buffer alive for 90 frames after track disappears
 
         # Image preprocessing (matches training transform_extract)
         self.transform = transforms.Compose([
@@ -106,6 +109,8 @@ class ResNetLSTMClassifier:
             self.track_buffers[track_id] = deque(maxlen=self.sequence_length)
 
         self.track_buffers[track_id].append(feat)
+        # Track is active — reset its missing counter
+        self.track_missing_count[track_id] = 0
         buf_len = len(self.track_buffers[track_id])
 
         # Not enough frames yet — skip temporal inference
@@ -115,7 +120,7 @@ class ResNetLSTMClassifier:
         # Sliding Window Sequence Builder
         seq = torch.stack(list(self.track_buffers[track_id]), dim=0).unsqueeze(0).to(self.device)
 
-        # Bi-GRU + Attention inference
+        # LSTM temporal inference
         with torch.no_grad():
             outputs, _attn_weights = self.temporal_model(seq)
             probs = torch.softmax(outputs, dim=1)
@@ -125,9 +130,25 @@ class ResNetLSTMClassifier:
         return label, confidence.item(), buf_len
 
     def cleanup_tracks(self, active_ids: set[int]) -> None:
-        """Evict buffers for tracks that have left the scene."""
-        stale = [tid for tid in self.track_buffers if tid not in active_ids]
-        for tid in stale:
+        """Evict buffers only after a grace period of consecutive missed frames."""
+        to_delete = []
+        for tid in self.track_buffers:
+            if tid not in active_ids:
+                self.track_missing_count[tid] = self.track_missing_count.get(tid, 0) + 1
+                if self.track_missing_count[tid] > self.grace_period:
+                    to_delete.append(tid)
+            else:
+                self.track_missing_count[tid] = 0
+        for tid in to_delete:
             del self.track_buffers[tid]
-        if stale:
-            print(f"[Tracker] Evicted {len(stale)} stale track(s): {stale}")
+            del self.track_missing_count[tid]
+
+    def clear_buffer(self) -> None:
+        """Clear all per-track frame buffers and missing counters.
+
+        Called when the state machine exits SLEEPING to ensure stale
+        temporal context does not bleed into the next IS_PROCESSING burst.
+        Does NOT alter model weights or inference logic.
+        """
+        self.track_buffers.clear()
+        self.track_missing_count.clear()
