@@ -34,7 +34,7 @@ class TestFunctionalAI(unittest.TestCase):
         else:
             cls.is_fallback = False
 
-        cls.yolo_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../inference/yolov8n.pt'))
+        cls.yolo_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/yolov8n.pt'))
         cls.lstm_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/resnet_lstm_best.pth'))
 
         # Initialize detector & classifier

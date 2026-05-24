@@ -5,7 +5,9 @@ import torch
 from PIL import Image
 
 class YOLODetector:
-    def __init__(self, model_path: str = 'yolov8n.pt', device_mode: str = 'server'):
+    def __init__(self, model_path: str = None, device_mode: str = 'server'):
+        if model_path is None:
+            model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/yolov8n.pt'))
         self.device_mode = device_mode
         actual_model = self._resolve_model(model_path)
         self.model = YOLO(actual_model)

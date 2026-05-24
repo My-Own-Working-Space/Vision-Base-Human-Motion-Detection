@@ -32,8 +32,8 @@ def update_bytetrack_config(track_buffer_val):
 def run_diagnostic_stream(track_buffer_val, num_frames=60, yolo_conf=0.15):
     update_bytetrack_config(track_buffer_val)
     
-    # Reload YOLODetector to pick up new config changes
-    detector = YOLODetector('yolov8n.pt', device_mode='server')
+    yolo_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/yolov8n.pt'))
+    detector = YOLODetector(yolo_model_path, device_mode='server')
     # Set YOLO conf threshold dynamically
     detector.model.overrides['conf'] = yolo_conf
     
