@@ -44,7 +44,8 @@ if TARGET_FPS < LSTM_TRAIN_FPS:
           f"Classification performance might be degraded.")
 
 print("[App] Initializing YOLOv8 + ByteTrack...")
-yolo = YOLODetector('yolov8n.pt', device_mode=DEVICE_MODE)
+yolo_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'yolov8n.pt'))
+yolo = YOLODetector(yolo_model_path, device_mode=DEVICE_MODE)
 
 print("[App] Initializing ResNet18 + LSTM classifier...")
 classifier = None
