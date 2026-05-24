@@ -1,0 +1,11 @@
+@baseUrl = http://localhost:8000
+
+### 1. Get System Status and Configuration
+GET {{baseUrl}}/
+Accept: application/json
+
+###
+
+### 2. Get Live MJPEG Annotated Video Feed
+GET {{baseUrl}}/video
+Accept: multipart/x-mixed-replace

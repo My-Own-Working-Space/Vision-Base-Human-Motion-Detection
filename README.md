@@ -24,7 +24,7 @@ An advanced, real-time AI surveillance system designed to detect and classify an
 - `/inference`: The core FastAPI application that bridges YOLO+ByteTrack tracking with the sliding-window LSTM sequence classifier.
 - `/models`: Storage for pre-trained weights (`.pt`, `.pth`). *(Ignored in git to save space)*.
 - `/integration`: Utility scripts (e.g., `data_bridge.py`) for simulating and pushing alerts.
-- `api_tests.http`: VS Code REST Client test script for API endpoints.
+- `api.http`: VS Code REST Client test script for API endpoints.
 
 ## Getting Started
 
@@ -63,7 +63,7 @@ python inference/app.py
 The annotated AI video stream will be available at: **http://localhost:8000/video**
 
 ### 4. Test API Endpoints
-You can use the provided [api_tests.http](api_tests.http) file in VS Code or run quick HTTP queries using curl:
+You can use the provided [api.http](api.http) file in VS Code or run quick HTTP queries using curl:
 ```bash
 # Query server status
 curl http://localhost:8000/
