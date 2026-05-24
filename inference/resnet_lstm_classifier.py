@@ -117,19 +117,53 @@ class ResNetLSTMClassifier:
                 del self.track_missing_count[track_id]
             return 'Buffering...', 0.0, 0
 
-    def cleanup_tracks(self, active_ids: set[int]) -> None:
+    def predict_interpolated(self, track_id: int) -> tuple[str, float, int]:
+        buf_len = len(self.track_buffers[track_id])
+        if buf_len < self.sequence_length:
+            return 'Buffering...', 0.0, buf_len
+
+        try:
+            seq = torch.stack(list(self.track_buffers[track_id]), dim=0).unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                outputs, _ = self.temporal_model(seq)
+                probs = torch.softmax(outputs, dim=1)
+                confidence, predicted = torch.max(probs, dim=1)
+
+            label = self.CLASS_NAMES[predicted.item()]
+            print(f"[BufferStatus] TrackID={track_id} (Interpolated) predicted successfully: {label} ({confidence.item():.1%}). buf_len={buf_len}.")
+            return label, confidence.item(), buf_len
+
+        except Exception as e:
+            print(f"[ResetReason] TrackID={track_id} interpolated prediction failed. Resetting buffer. Exception: {e}")
+            if track_id in self.track_buffers:
+                del self.track_buffers[track_id]
+                del self.track_missing_count[track_id]
+            return 'Buffering...', 0.0, 0
+
+    def cleanup_tracks(self, active_ids: set[int]) -> list[int]:
         to_delete = []
+        interpolated_ids = []
         for tid in self.track_buffers:
             if tid not in active_ids:
                 self.track_missing_count[tid] = self.track_missing_count.get(tid, 0) + 1
                 if self.track_missing_count[tid] > self.grace_period:
                     to_delete.append(tid)
+                elif self.track_missing_count[tid] <= 3 and len(self.track_buffers[tid]) > 0:
+                    # Feature-level interpolation: duplicate last known feature
+                    last_feat = self.track_buffers[tid][-1]
+                    self.track_buffers[tid].append(last_feat)
+                    interpolated_ids.append(tid)
+                    print(f"[Interpolation] TrackID={tid} missing for {self.track_missing_count[tid]} frame(s). Interpolated using last known feature.")
             else:
                 self.track_missing_count[tid] = 0
+
         for tid in to_delete:
             print(f"[ResetReason] Deleted TrackID={tid} from buffer. Reason: lost tracking/disappeared (missing for {self.track_missing_count[tid]} frames > grace_period {self.grace_period})")
             del self.track_buffers[tid]
             del self.track_missing_count[tid]
+
+        return interpolated_ids
 
     def clear_buffer(self, reason: str = "State Machine wakeup/transition") -> None:
         print(f"[ResetReason] Cleared all buffers. Reason: {reason}")

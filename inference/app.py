@@ -95,6 +95,7 @@ def generate_frames():
     state = "IS_PROCESSING"
     state_start_time = time.monotonic()
     prev_gray = None
+    bg_motion_ema = float(MOTION_THRESHOLD)
 
     frame_idx = 0
     cached_labels: dict[int, tuple] = {}
@@ -172,9 +173,18 @@ def generate_frames():
                 _draw_label(frame, x1, y1, display_text, color)
 
             if classifier:
-                classifier.cleanup_tracks(active_ids)
+                interpolated_ids = classifier.cleanup_tracks(active_ids)
+                for tid in interpolated_ids:
+                    label, confidence, buf_len = classifier.predict_interpolated(tid)
+                    if label != 'Buffering...':
+                        color = COLOR_ANOMALY if label == 'Anomaly' else COLOR_NORMAL
+                        bbox_thick = 3 if label == 'Anomaly' else 2
+                        display_text = f"ID:{tid} Human (Interp) - {label} {confidence:.0%}"
+                        cached_labels[tid] = (color, bbox_thick, display_text)
+                        if label == 'Anomaly':
+                            print(f"[LSTM] Track {tid} (Interpolated): {label} ({confidence:.1%})")
             
-            stale_labels = [tid for tid in cached_labels if tid not in active_ids]
+            stale_labels = [tid for tid in cached_labels if tid not in active_ids and (not classifier or tid not in classifier.track_buffers)]
             for tid in stale_labels:
                 del cached_labels[tid]
 
@@ -195,9 +205,16 @@ def generate_frames():
                 diff = cv2.absdiff(prev_gray, gray)
                 motion_score = int(np.sum(diff > 25))
 
-                if motion_score > MOTION_THRESHOLD:
+                if motion_score < MOTION_THRESHOLD * 3:
+                    bg_motion_ema = bg_motion_ema * 0.95 + motion_score * 0.05
+
+                alpha = float(os.getenv("ADAPTIVE_ALPHA", "1.2"))
+                beta = int(os.getenv("ADAPTIVE_BETA", str(MOTION_THRESHOLD)))
+                dynamic_threshold = int(alpha * bg_motion_ema + beta)
+
+                if motion_score > dynamic_threshold:
                     watchdog_triggered = True
-                    print(f"[Watchdog] Motion detected ({motion_score}) -> waking up.")
+                    print(f"[Watchdog] Adaptive motion detected ({motion_score} > adaptive threshold {dynamic_threshold}) -> waking up.")
 
             prev_gray = gray
 
