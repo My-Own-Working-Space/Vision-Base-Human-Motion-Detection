@@ -13,10 +13,56 @@ An advanced, real-time AI surveillance system designed to detect and classify an
 - **State Machine Engine:** Intelligent `IS_PROCESSING` ↔ `SLEEPING` state machine with a lightweight **motion watchdog** that detects sudden movement via frame differencing and wakes the AI pipeline instantly — dramatically reducing CPU usage while maintaining responsiveness.
 - **Adaptive Thresholding:** Dynamic watchdog threshold ($T_{motion}^{(t)} = \alpha \cdot \bar{B}_t + \beta$) adapts to wind, shadows, and environment lighting to prevent false-triggers.
 - **Feature-Level Interpolation:** Keeps LSTM sequences continuous by duplicating the last known feature vector if a track is temporarily lost (up to 3 frames), preventing abrupt buffer resets.
+- **Ring Buffer Blur Filter:** Detects drone/camera vibration/shaking (via Laplacian variance) and duplicates the last sharp frame instead of dropping history, keeping the sliding window stable.
+- **Event-Driven Alert System:** Automatically triggers secure multipart-form payloads (image + metadata) to a external .NET Dashboard API upon detecting anomalies with confidence > 0.70.
+- **Robust Local Observability:** Guarantees zero-loss auditing via high-reliability CSV metadata logging and local image persistence.
 - **Hardware-Aware Loading:** Automatically selects the optimal model format: TensorRT INT8/FP16 engines on embedded devices (Jetson, RPi) with CUDA, or standard `.pt` on server/desktop.
 - **FPS Throttling (Server Mode):** Automatically adjusts frame read rate to match `TARGET_FPS`, preventing CPU overload on high-FPS streams.
 - **Real-Time Video Streaming:** Features a high-performance **FastAPI** backend that annotates frames (bounding boxes, track IDs, anomaly warnings) and serves them via an MJPEG stream.
 - **IP Camera Ready:** Seamlessly integrates with physical webcams, RTSP IP Cameras, or pre-recorded video files via environment variables.
+
+## Anomaly Alert Pipeline & Observation Engine
+
+The system features a robust, non-blocking alerting workflow designed to communicate seamlessly with a .NET Dashboard API:
+
+```
+[LSTM Inference] → Anomaly detected (Conf > 0.70)
+                        │
+                        ▼
+           [Throttling / Guard Check] (Once per track ID)
+                        │
+                        ▼
+      [Extract 8th Frame (Evidence Image)]
+                        │
+       ┌────────────────┴────────────────┐
+       ▼                                 ▼
+[Local CSV Persistence]       [Dashboard API Transmission]
+- Path: /alerts/metadata.csv  - POST /api/detections
+- Status: "Pending"           - Multipart/form-data payload
+                                - image: JPG file
+                                - class_name: specific anomaly
+                                - confidence: float
+                                - timestamp: ISO-8601
+                                - lat / lng: coordinates
+                                         │
+                                         ▼
+                             [Success: Status = "Uploaded"]
+```
+
+### 1. Payload Schema
+When an anomaly is validated, the pipeline POSTs a secure `multipart/form-data` payload to `/api/detections`:
+- **`image`**: JPG binary file (captured at the middle of the 16-frame window for optimal visual evidence).
+- **`class_name`**: The exact predicted anomaly action class (e.g. `Fighting`, `Assault`).
+- **`confidence`**: Classifier confidence probability (float, e.g., `0.939`).
+- **`timestamp`**: ISO-8601 date string (without microseconds).
+- **`lat` / `lng`**: Geo-coordinates of the camera/drone (configurable via environment variables `LATITUDE` / `LONGITUDE`).
+
+### 2. Local Backup and Observability
+All alerts are persisted locally to prevent loss of data if the dashboard backend is temporarily offline:
+- **Visual Evidence Crops**: Saved inside the `/alerts/` directory.
+- **CSV Audit Ledger**: Appends entry to `alerts/metadata.csv` with fields `timestamp`, `track_id`, `class_name`, `confidence`, `lat`, `lng`, `image_path`, `upload_status` (`Pending` or `Uploaded`).
+
+---
 
 ## Repository Structure
 
