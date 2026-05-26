@@ -34,3 +34,6 @@ runs/
 .DS_Store
 Thumbs.db
 .ipynb_checkpoints/
+
+# Runtime outputs
+alerts/

@@ -9,3 +9,28 @@ Accept: application/json
 ### 2. Get Live MJPEG Annotated Video Feed
 GET {{baseUrl}}/video
 Accept: multipart/x-mixed-replace
+
+###
+
+### 3. Simulating .NET Dashboard Endpoint (Receiving Alerts from Python Pipeline)
+# Default target: http://localhost:5000/api/alerts
+POST http://localhost:5000/api/alerts
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="track_id"
+
+888
+--WebAppBoundary
+Content-Disposition: form-data; name="confidence"
+
+0.8742
+--WebAppBoundary
+Content-Disposition: form-data; name="timestamp"
+
+2026-05-26T17:15:00.000000
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="alert_track_888_20260526_171500.jpg"
+Content-Type: image/jpeg
+
+./alerts/alert_track_888_20260526_171500.jpg

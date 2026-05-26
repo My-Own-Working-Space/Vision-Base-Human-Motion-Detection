@@ -5,11 +5,11 @@ import yaml
 import time
 from PIL import Image
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'inference')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'training')))
 
-from yolo_detector import YOLODetector
-from resnet_lstm_classifier import ResNetLSTMClassifier
+from inference.yolo_detector import YOLODetector
+from inference.resnet_lstm_classifier import ResNetLSTMClassifier
 
 VIDEO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'inference', 'test_video.mp4'))
 BYTETRACK_CFG = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'inference', 'bytetrack_custom.yaml'))
@@ -37,7 +37,7 @@ def run_diagnostic_stream(track_buffer_val, num_frames=60, yolo_conf=0.15):
     # Set YOLO conf threshold dynamically
     detector.model.overrides['conf'] = yolo_conf
     
-    model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models', 'resnet_lstm_best.pth'))
+    model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models', 'resnet_lstm_ucf_best.pth'))
     classifier = ResNetLSTMClassifier(model_path)
     classifier.grace_period = 30 # standard user request
     

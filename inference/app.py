@@ -4,7 +4,8 @@ import sys
 import time
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'training'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'training')))
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -15,8 +16,8 @@ import logging
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("ultralytics").setLevel(logging.WARNING)
 
-from yolo_detector import YOLODetector
-from resnet_lstm_classifier import ResNetLSTMClassifier
+from inference.yolo_detector import YOLODetector
+from inference.resnet_lstm_classifier import ResNetLSTMClassifier
 
 # Configurations
 DEVICE_MODE = os.getenv("DEVICE_MODE", "server")
@@ -27,7 +28,7 @@ TARGET_FPS = int(os.getenv("TARGET_FPS", "8"))
 LSTM_TRAIN_FPS = int(os.getenv("LSTM_TRAIN_FPS", "30"))
 
 IP_CAMERA_URL = os.getenv("IP_CAMERA_URL", "0")
-DEFAULT_MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../models/resnet_lstm_best.pth"))
+DEFAULT_MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../models/resnet_lstm_ucf_best.pth"))
 LSTM_MODEL_PATH = os.getenv("LSTM_MODEL_PATH", DEFAULT_MODEL_PATH)
 SEQUENCE_LENGTH = int(os.getenv("SEQUENCE_LENGTH", "16"))
 
@@ -137,12 +138,12 @@ def generate_frames():
                 active_ids.add(track_id)
 
                 if classifier:
-                    label, confidence, buf_len = classifier.predict(item['image'], track_id)
+                    label, confidence, buf_len = classifier.predict(item['image'], track_id, full_frame=frame)
 
                     if label == 'Anomaly':
                         color = COLOR_ANOMALY
                         bbox_thick = 3
-                        display_text = f"ID:{track_id} Human - ANOMALY {confidence:.0%}"
+                        display_text = f"ID:{track_id} Human - ANOMALY"
                     elif label == 'Buffering...':
                         color = COLOR_BUFFERING
                         bbox_thick = 1
@@ -150,7 +151,7 @@ def generate_frames():
                     else:
                         color = COLOR_NORMAL
                         bbox_thick = 2
-                        display_text = f"ID:{track_id} Human - Normal {confidence:.0%}"
+                        display_text = f"ID:{track_id} Human - Normal"
 
                     cached_labels[track_id] = (color, bbox_thick, display_text)
 
@@ -180,7 +181,7 @@ def generate_frames():
                     if label != 'Buffering...':
                         color = COLOR_ANOMALY if label == 'Anomaly' else COLOR_NORMAL
                         bbox_thick = 3 if label == 'Anomaly' else 2
-                        display_text = f"ID:{tid} Human (Interp) - {label} {confidence:.0%}"
+                        display_text = f"ID:{tid} Human (Interp) - {label}"
                         cached_labels[tid] = (color, bbox_thick, display_text)
                         if label == 'Anomaly':
                             print(f"[LSTM] Track {tid} (Interpolated): {label} ({confidence:.1%})")
@@ -228,8 +229,9 @@ def generate_frames():
                 state = "IS_PROCESSING"
                 state_start_time = time.monotonic()
                 cached_labels.clear()
-                if classifier:
-                    classifier.clear_buffer(reason=f"State Machine transition from SLEEPING to IS_PROCESSING due to {reason}")
+                # NOTE: Do NOT clear classifier buffers here.
+                # cleanup_tracks(grace_period=30) already handles stale tracks.
+                # Clearing buffers forces LSTM to re-buffer 16 frames (blind spot).
                 print(f"[StateMachine] Waking up due to {reason}.")
 
         _draw_pipeline_hud(frame, frame_idx, num_tracks, state)

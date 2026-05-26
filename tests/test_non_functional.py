@@ -5,13 +5,12 @@ import time
 import numpy as np
 import cv2
 import psutil
-import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'inference')))
 
-from yolo_detector import YOLODetector
-from resnet_lstm_classifier import ResNetLSTMClassifier
+from inference.yolo_detector import YOLODetector
+from inference.resnet_lstm_classifier import ResNetLSTMClassifier
 
 class TestNonFunctionalPerformance(unittest.TestCase):
     """
@@ -31,7 +30,7 @@ class TestNonFunctionalPerformance(unittest.TestCase):
             cv2.imwrite(cls.test_image_path, dummy_img)
 
         cls.yolo_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/yolov8n.pt'))
-        cls.lstm_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/resnet_lstm_best.pth'))
+        cls.lstm_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/resnet_lstm_ucf_best.pth'))
 
         # Track resource utilization during initialization
         cls.process = psutil.Process(os.getpid())

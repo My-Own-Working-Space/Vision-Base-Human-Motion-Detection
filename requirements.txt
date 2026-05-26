@@ -1,20 +1,15 @@
-# --- Suspicious Behavior Detection System Core Dependencies ---
 
-# Web & API Framework
 fastapi==0.136.1
 uvicorn==0.47.0
 python-multipart==0.0.29
 
-# Deep Learning & Object Detection
 torch==2.12.0
 torchvision==0.27.0
 ultralytics==8.4.51
 
-# Image & Video Processing
 opencv-python==4.13.0.92
 pillow==12.2.0
 
-# General Utilities
 matplotlib==3.10.9
 psutil==7.2.2
 PyYAML==6.0.3

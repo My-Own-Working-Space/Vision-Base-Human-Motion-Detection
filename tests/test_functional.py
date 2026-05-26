@@ -10,8 +10,8 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'inference')))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'training')))
 
-from yolo_detector import YOLODetector
-from resnet_lstm_classifier import ResNetLSTMClassifier
+from inference.yolo_detector import YOLODetector
+from inference.resnet_lstm_classifier import ResNetLSTMClassifier
 
 class TestFunctionalAI(unittest.TestCase):
     """
@@ -35,7 +35,7 @@ class TestFunctionalAI(unittest.TestCase):
             cls.is_fallback = False
 
         cls.yolo_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/yolov8n.pt'))
-        cls.lstm_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/resnet_lstm_best.pth'))
+        cls.lstm_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../models/resnet_lstm_ucf_best.pth'))
 
         # Initialize detector & classifier
         cls.detector = YOLODetector(cls.yolo_model_path)
@@ -110,6 +110,74 @@ class TestFunctionalAI(unittest.TestCase):
         for _ in range(self.classifier.grace_period + 5):
             self.classifier.cleanup_tracks(active_ids={1, 2, 3})
         self.assertNotIn(track_id, self.classifier.track_buffers, "Stale track buffer was not cleared.")
+
+    def test_alert_system_trigger(self):
+        """Verify that when Anomaly is detected with conf > 0.70, an alert is triggered, saved, and logged in CSV."""
+        import glob
+        import shutil
+        import csv
+        
+        # Backup existing alerts directory
+        backup_dir = "alerts_backup"
+        if os.path.exists("alerts"):
+            shutil.copytree("alerts", backup_dir, dirs_exist_ok=True)
+            shutil.rmtree("alerts")
+        os.makedirs("alerts", exist_ok=True)
+        
+        try:
+            # Create a dedicated classifier for testing
+            test_classifier = ResNetLSTMClassifier(self.lstm_model_path)
+            
+            # Mock self.temporal_model to return a high probability anomaly
+            # For 5-class model, index 0 is Normal, index 1-4 are Anomalies
+            mock_output = torch.zeros((1, test_classifier.num_classes))
+            mock_output[0, 1] = 5.0 # This will make softmax for class 1 (anomaly) extremely high (near 1.0)
+            
+            original_forward = test_classifier.temporal_model.forward
+            test_classifier.temporal_model.forward = lambda x: (mock_output.to(test_classifier.device), None)
+            
+            dummy_crop = Image.fromarray(np.random.randint(0, 255, (128, 64, 3), dtype=np.uint8))
+            dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            track_id = 777
+            
+            # Feed 15 frames: buffering
+            for _ in range(15):
+                test_classifier.predict(dummy_crop, track_id, full_frame=dummy_frame)
+                
+            # Feed the 16th frame: should trigger alert
+            label, confidence, buf_len = test_classifier.predict(dummy_crop, track_id, full_frame=dummy_frame)
+            
+            self.assertEqual(label, 'Anomaly')
+            self.assertGreater(confidence, 0.70)
+            
+            # Check if alert was triggered
+            self.assertTrue(test_classifier.alert_triggered.get(track_id, False))
+            
+            # Check that an image was saved in alerts directory
+            jpg_files = glob.glob("alerts/*.jpg")
+            self.assertEqual(len(jpg_files), 1, "Alert image should be saved in alerts/")
+            
+            # Check CSV file creation and logging
+            csv_path = "alerts/metadata.csv"
+            self.assertTrue(os.path.exists(csv_path), "CSV metadata should be created")
+            
+            with open(csv_path, mode='r') as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+                self.assertEqual(len(rows), 2, "CSV should contain header + 1 alert row")
+                self.assertEqual(rows[1][1], str(track_id), "CSV track_id should match")
+                self.assertEqual(rows[1][2], test_classifier.class_names[1], "CSV class_name should match")
+                
+            # Restore original forward method
+            test_classifier.temporal_model.forward = original_forward
+            
+        finally:
+            # Clean up and restore backup
+            if os.path.exists("alerts"):
+                shutil.rmtree("alerts")
+            if os.path.exists(backup_dir):
+                shutil.copytree(backup_dir, "alerts", dirs_exist_ok=True)
+                shutil.rmtree(backup_dir)
 
 if __name__ == '__main__':
     unittest.main()
