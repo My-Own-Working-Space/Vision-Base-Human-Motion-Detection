@@ -1,8 +1,20 @@
+"""
+YOLOv8 + ByteTrack Detector — Black Box Inference Module.
+
+Handles person detection, multi-object tracking, and crop extraction.
+This module is intentionally kept as a self-contained inference engine.
+"""
+
 from ultralytics import YOLO
 import cv2
 import os
 import torch
 from PIL import Image
+
+from edge.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class YOLODetector:
     def __init__(self, model_path: str = None, device_mode: str = 'server'):
@@ -12,7 +24,7 @@ class YOLODetector:
         actual_model = self._resolve_model(model_path)
         self.model = YOLO(actual_model)
         self.device = self._resolve_device()
-        print(f"[YOLODetector] Loaded model: {actual_model} | device: {self.device} | mode: {device_mode}")
+        logger.info("Loaded model: %s | device: %s | mode: %s", actual_model, self.device, device_mode)
 
     def _resolve_model(self, base_path: str) -> str:
         if self.device_mode != 'embedded':
@@ -22,10 +34,10 @@ class YOLODetector:
         for engine_name in ['yolov8n_int8.engine', 'yolov8n_fp16.engine']:
             engine_path = os.path.join(model_dir, engine_name)
             if os.path.exists(engine_path):
-                print(f"[YOLODetector] Found TensorRT engine: {engine_path}")
+                logger.info("Found TensorRT engine: %s", engine_path)
                 return engine_path
 
-        print(f"[YOLODetector] No TensorRT engine found, falling back to {base_path}")
+        logger.info("No TensorRT engine found, falling back to %s", base_path)
         return base_path
 
     def _resolve_device(self) -> str:
@@ -67,27 +79,5 @@ class YOLODetector:
                 'bbox': (x1, y1, x2, y2),
                 'track_id': track_id,
                 'conf': conf,
-            })
-        return crops
-
-    def detect(self, frame):
-        results = self.model(frame, verbose=False)
-        return results[0]
-
-    def get_crops(self, frame, results) -> list[dict]:
-        crops = []
-        for box in results.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cls_id = int(box.cls[0])
-            cls_name = self.model.names[cls_id]
-            crop_cv2 = frame[y1:y2, x1:x2]
-            if crop_cv2.size == 0:
-                continue
-            crop_pil = Image.fromarray(cv2.cvtColor(crop_cv2, cv2.COLOR_BGR2RGB))
-            crops.append({
-                'image': crop_pil,
-                'bbox': (x1, y1, x2, y2),
-                'label': cls_name,
-                'conf': float(box.conf[0]),
             })
         return crops

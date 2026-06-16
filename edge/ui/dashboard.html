@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edge Device - Hệ thống phát hiện hành vi bất thường</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --accent-primary: #8b5cf6;
+            --accent-glow: rgba(139, 92, 246, 0.4);
+            --normal-color: #10b981;
+            --normal-glow: rgba(16, 185, 129, 0.4);
+            --anomaly-color: #ef4444;
+            --anomaly-glow: rgba(239, 68, 68, 0.4);
+            --warning-color: #f59e0b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.1) 0px, transparent 50%),
+                radial-gradient(at 50% 0%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1440px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-icon {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, var(--accent-primary), #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 10px var(--accent-glow));
+        }
+
+        .logo-text h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+        }
+
+        .logo-text p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--normal-color);
+            box-shadow: 0 0 15px var(--normal-glow);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        /* Layout Grid */
+        .grid-layout {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 1024px) {
+            .grid-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Cards styling */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            display: flex;
+            flex-direction: column;
+            gap: 1.2rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.75rem;
+        }
+
+        .card-title i {
+            color: var(--accent-primary);
+        }
+
+        /* Video Feed Container */
+        .video-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .video-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* Stats & Config List */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        .info-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            padding: 1rem;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .info-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: rgba(139, 92, 246, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .info-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.4rem;
+        }
+
+        .info-value {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        /* Alert Ledger / Log List */
+        .alert-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            max-height: 480px;
+            overflow-y: auto;
+            padding-right: 0.5rem;
+        }
+
+        .alert-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .alert-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 99px;
+        }
+
+        .alert-item {
+            background: rgba(239, 68, 68, 0.05);
+            border: 1px solid rgba(239, 68, 68, 0.15);
+            padding: 1rem;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .alert-badge {
+            background: var(--anomaly-color);
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        .alert-time {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .alert-body {
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .alert-footer {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .empty-alerts {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .empty-alerts i {
+            font-size: 2rem;
+            color: rgba(255,255,255,0.05);
+        }
+
+        /* Action Buttons */
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+            box-shadow: 0 4px 14px var(--accent-glow);
+        }
+
+        .btn-primary:hover {
+            background: #7c3aed;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo-section">
+                <i class="fa-solid fa-drone logo-icon"></i>
+                <div class="logo-text">
+                    <h1>Edge Behavior AI</h1>
+                    <p>Hệ thống giám sát hành vi thông minh trên Drone / Raspberry Pi</p>
+                </div>
+            </div>
+            <div class="status-badge" id="sys-status">
+                <i class="fa-solid fa-circle-check"></i>
+                <span>Đang hoạt động</span>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <div class="grid-layout">
+            <!-- Left Side: Live Feed & Stats -->
+            <div style="display: flex; flex-direction: column; gap: 2rem;">
+                <!-- Live Video Feed -->
+                <div class="card">
+                    <div class="card-title">
+                        <i class="fa-solid fa-video"></i>
+                        <span>Luồng video phân tích thời gian thực</span>
+                    </div>
+                    <div class="video-container">
+                        <div class="video-overlay">
+                            <i class="fa-solid fa-circle" style="color: var(--anomaly-color); animation: pulse 1s infinite;"></i>
+                            <span>LIVE STREAM</span>
+                        </div>
+                        <img class="video-feed" src="/video" alt="Vui lòng kiểm tra cấu hình IP_CAMERA_URL" onerror="this.onerror=null; this.src='https://placehold.co/640x360/111827/9CA3AF?text=Khong+the+ket+noi+luong+camera';">
+                    </div>
+                </div>
+
+                <!-- Pipeline Stats -->
+                <div class="card">
+                    <div class="card-title">
+                        <i class="fa-solid fa-microchip"></i>
+                        <span>Thông số vận hành và Mô hình</span>
+                    </div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">Chế độ phần cứng</div>
+                            <div class="info-value" id="val-device-mode" style="text-transform: uppercase;">Server</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">AI Processing</div>
+                            <div class="info-value" id="val-duration">2.0s</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Watchdog Sleep</div>
+                            <div class="info-value" id="val-sleep">3.0s</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Độ phân giải luồng</div>
+                            <div class="info-value">640px</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Model LSTM Loaded</div>
+                            <div class="info-value" id="val-model">Có</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Địa chỉ Backend API</div>
+                            <div class="info-value" id="val-backend" style="font-size: 0.85rem; word-break: break-all;">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Alert Log -->
+            <div style="display: flex; flex-direction: column; gap: 2rem;">
+                <div class="card" style="flex: 1;">
+                    <div class="card-title">
+                        <i class="fa-solid fa-bell"></i>
+                        <span>Nhật ký phát hiện bất thường</span>
+                    </div>
+                    
+                    <div class="alert-list" id="alert-container">
+                        <!-- Dynamic Alerts go here -->
+                        <div class="empty-alerts" id="no-alerts-msg">
+                            <i class="fa-solid fa-shield-halved"></i>
+                            <p>Chưa ghi nhận hành vi bất thường nào.</p>
+                            <span style="font-size: 0.75rem; color: var(--text-secondary);">Hệ thống đang quét luồng camera...</span>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 1.2rem;">
+                        <button class="btn btn-secondary" onclick="clearLocalLogs()">
+                            <i class="fa-solid fa-trash-can"></i> Xoá log
+                        </button>
+                        <a href="/video" target="_blank" class="btn btn-primary" style="text-decoration: none;">
+                            <i class="fa-solid fa-up-right-from-square"></i> Mở luồng gốc
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Fetch config details on load
+        async function fetchConfig() {
+            try {
+                const response = await fetch('/');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('val-device-mode').textContent = data.device_mode;
+                    document.getElementById('val-duration').textContent = data.config.processing_duration + 's';
+                    document.getElementById('val-sleep').textContent = data.config.sleep_duration + 's';
+                    document.getElementById('val-model').textContent = data.model_loaded ? 'ResNet18 + LSTM' : 'Chưa tải';
+                    document.getElementById('val-backend').textContent = data.api_backend;
+                }
+            } catch (err) {
+                console.error("Failed to fetch config", err);
+            }
+        }
+
+        // Keep track of alert IDs to avoid duplicate rendering
+        const renderedAlerts = new Set();
+
+        // Connect a simple polling check for new alerts that we save locally
+        async function checkAlerts() {
+            try {
+                // We can fetch system status or updates
+                // For a simple mock log, we will check if any images have been received or logged.
+                // In this mock, we can generate simulated records for demonstration on UI if nothing is active
+            } catch (err) {}
+        }
+
+        function clearLocalLogs() {
+            const container = document.getElementById('alert-container');
+            container.innerHTML = `
+                <div class="empty-alerts" id="no-alerts-msg">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    <p>Chưa ghi nhận hành vi bất thường nào.</p>
+                </div>
+            `;
+            renderedAlerts.clear();
+        }
+
+        // Listen for alerts via a custom EventSource or polling if we want,
+        // but since we also have the mock receiver /api/detections, we can capture those in real-time!
+        // We'll override the mock receiver endpoint slightly to push updates to the UI, 
+        // or poll an endpoint that returns the saved alerts list!
+        
+        async function pollAlertsList() {
+            try {
+                const response = await fetch('/api/alerts-history');
+                if (response.ok) {
+                    const alerts = await response.json();
+                    const container = document.getElementById('alert-container');
+                    const noMsg = document.getElementById('no-alerts-msg');
+                    
+                    if (alerts && alerts.length > 0) {
+                        if (noMsg) noMsg.remove();
+                        
+                        alerts.forEach(alert => {
+                            const uniqueId = alert.track_id + '_' + alert.timestamp;
+                            if (!renderedAlerts.has(uniqueId)) {
+                                renderedAlerts.add(uniqueId);
+                                
+                                const div = document.createElement('div');
+                                div.className = 'alert-item';
+                                div.innerHTML = `
+                                    <div class="alert-header">
+                                        <span class="alert-badge">Hành vi bất thường</span>
+                                        <span class="alert-time">${alert.timestamp}</span>
+                                    </div>
+                                    <div class="alert-body">
+                                        Phát hiện: <strong style="color: var(--anomaly-color);">${alert.class_name}</strong>
+                                    </div>
+                                    <div class="alert-footer">
+                                        <span>Độ tin cậy: ${(alert.confidence * 100).toFixed(1)}%</span>
+                                        <span>Track ID: #${alert.track_id}</span>
+                                    </div>
+                                `;
+                                container.insertBefore(div, container.firstChild);
+                            }
+                        });
+                    }
+                }
+            } catch (err) {}
+        }
+
+        fetchConfig();
+        setInterval(pollAlertsList, 2000);
+    </script>
+</body>
+</html>

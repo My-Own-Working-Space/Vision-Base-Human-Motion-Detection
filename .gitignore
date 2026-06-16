@@ -19,17 +19,6 @@ runs/
 .vscode/
 .idea/
 
-# .NET (ASP.NET Core)
-[Bb]in/
-[Oo]bj/
-.vs/
-*.user
-*.suo
-*.sln.docstates
-*.userprefs
-*.mono
-*.csproj.user
-
 # OS
 .DS_Store
 Thumbs.db
@@ -37,3 +26,4 @@ Thumbs.db
 
 # Runtime outputs
 alerts/
+

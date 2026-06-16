@@ -83,7 +83,7 @@ def main():
     env["IP_CAMERA_URL"] = test_video_source
     try:
         ai_process = subprocess.Popen(
-            [sys.executable, "inference/app.py"],
+            [sys.executable, "edge/main.py"],
             cwd=workspace_dir,
             env=env,
             stdout=subprocess.PIPE,
