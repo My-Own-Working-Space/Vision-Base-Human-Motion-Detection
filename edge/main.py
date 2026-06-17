@@ -126,29 +126,27 @@ def generate_frames() -> Generator[bytes, None, None]:
         camera_service.close()
 
 
-# In-memory history for local dashboard display
-alerts_history: list[dict] = []
-
-
 @app.get("/")
 def index(request: Request):
-    """System status and configuration or beautiful UI dashboard."""
+    """System status and configuration."""
     accept_header = request.headers.get("accept", "")
     if "text/html" in accept_header:
         html_path = os.path.join(os.path.dirname(__file__), "ui", "dashboard.html")
         if os.path.exists(html_path):
             with open(html_path, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
-                
+
     return {
         "status": "running",
         "device_mode": config.detection.device_mode,
+        "alert_state": alert_service.state,
         "config": {
             "processing_duration": config.state_machine.processing_duration,
             "sleep_duration": config.state_machine.sleep_duration,
-            "motion_threshold": config.state_machine.motion_threshold,
             "target_fps": config.camera.target_fps,
             "alert_threshold": config.alert.confidence_threshold,
+            "confirmation_frames": config.alert.confirmation_frames,
+            "cooldown_seconds": config.alert.cooldown_seconds,
         },
         "model_loaded": detection_service.has_classifier,
         "api_backend": config.api.detections_url,
@@ -166,44 +164,28 @@ def video_feed():
 
 @app.get("/api/alerts-history")
 def get_alerts_history():
-    """Return recent alerts logged by the mock receiver."""
-    return alerts_history
-
-
-from fastapi import UploadFile, File, Form
-
-@app.post("/api/detections")
-async def receive_detection(
-    image: UploadFile = File(...),
-    class_name: str = Form(...),
-    confidence: float = Form(...),
-    timestamp: str = Form(...),
-    lat: float = Form(...),
-    lng: float = Form(...)
-):
-    """Mock backend dashboard receiver endpoint."""
-    logger.info(
-        "Mock Dashboard received alert: class=%s, confidence=%f, timestamp=%s, lat=%f, lng=%f",
-        class_name, confidence, timestamp, lat, lng
-    )
-    # Save to memory history
-    alerts_history.append({
-        "class_name": class_name,
-        "confidence": confidence,
-        "timestamp": timestamp,
-        "track_id": len(alerts_history) + 1,  # Simple incremental ID for display
-    })
-    
-    # Save the received image to alerts/received directory
-    received_dir = os.path.join(config.alert.alerts_directory, "received")
-    os.makedirs(received_dir, exist_ok=True)
-    save_path = os.path.join(received_dir, image.filename)
-    
-    with open(save_path, "wb") as f:
-        f.write(await image.read())
+    """Return recent alerts logged locally in the CSV file."""
+    import csv
+    csv_path = os.path.join(config.alert.alerts_directory, config.alert.csv_filename)
+    if not os.path.exists(csv_path):
+        return []
         
-    logger.info("Saved received alert evidence to: %s", save_path)
-    return {"status": "success", "message": "Alert received and saved successfully"}
+    alerts = []
+    try:
+        with open(csv_path, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                alerts.append({
+                    "timestamp": row.get("timestamp", ""),
+                    "track_id": int(row.get("track_id", "0")),
+                    "class_name": row.get("class_name", ""),
+                    "confidence": float(row.get("confidence", "0.0")),
+                })
+    except Exception as e:
+        logger.error("Error reading alert CSV history: %s", e)
+        
+    # Return latest alerts first (UI displays them accordingly, but let's return all)
+    return alerts
 
 
 @app.on_event("shutdown")

@@ -161,7 +161,7 @@ class CameraService:
                 self._state = "SLEEPING"
                 self._state_start_time = time.monotonic()
                 self._prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                logger.info("State transition: IS_PROCESSING → SLEEPING")
+                logger.debug("State transition: IS_PROCESSING → SLEEPING")
 
         elif self._state == "SLEEPING":
             watchdog_triggered = False
@@ -180,7 +180,7 @@ class CameraService:
 
                 if motion_score > dynamic_threshold:
                     watchdog_triggered = True
-                    logger.info(
+                    logger.debug(
                         "Watchdog: motion detected (%d > threshold %d) → waking up",
                         motion_score, dynamic_threshold,
                     )
@@ -191,6 +191,6 @@ class CameraService:
                 reason = "motion" if watchdog_triggered else "timeout"
                 self._state = "IS_PROCESSING"
                 self._state_start_time = time.monotonic()
-                logger.info("State transition: SLEEPING → IS_PROCESSING (reason=%s)", reason)
+                logger.debug("State transition: SLEEPING → IS_PROCESSING (reason=%s)", reason)
 
         return self._state

@@ -1,8 +1,14 @@
 """
-AlertService — Responsible for threshold validation, event creation,
-retry logic, and queueing failed API requests.
+AlertService — Anomaly confirmation state machine with cooldown.
 
-Single Responsibility: Decide whether a DetectionEvent warrants an alert,
+State Flow:
+    NORMAL → consecutive anomaly frames detected
+    SUSPECTED → anomaly count reaches confirmation threshold
+    ANOMALY → alert dispatched, cooldown timer starts
+    COOLDOWN → suppresses duplicate alerts for a configurable duration
+    COOLDOWN expires → back to NORMAL, ready for next anomaly
+
+Single Responsibility: Decide whether a confirmed anomaly warrants an alert,
 persist evidence locally, and transmit to the Backend API.
 """
 
@@ -14,6 +20,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 import cv2
@@ -28,10 +35,22 @@ from edge.models import AlertPayload, DetectionEvent, EventType
 logger = get_logger(__name__)
 
 
+class AlertState(str, Enum):
+    """Alert state machine states."""
+    NORMAL = "NORMAL"
+    SUSPECTED = "SUSPECTED"
+    COOLDOWN = "COOLDOWN"
+
+
 class AlertService:
     """
-    Evaluates DetectionEvents against configurable thresholds and
-    manages the full alert lifecycle: save evidence → upload → CSV log → retry.
+    Evaluates DetectionEvents using a confirmation + cooldown state machine.
+
+    State Machine:
+        NORMAL     → anomaly detected → SUSPECTED
+        SUSPECTED  → consecutive count >= threshold → dispatch alert → COOLDOWN
+        SUSPECTED  → normal frame resets streak → NORMAL
+        COOLDOWN   → suppresses alerts for cooldown_seconds → NORMAL
     """
 
     def __init__(
@@ -42,8 +61,15 @@ class AlertService:
         self._config = alert_config
         self._api_client = api_client
 
-        # Track which track_ids have already triggered an alert (throttle: once per track)
-        self._alert_triggered: dict[int, bool] = {}
+        # State machine
+        self._state = AlertState.NORMAL
+        self._consecutive_anomaly_count: int = 0
+        self._last_alert_time: float = 0.0
+
+        # Evidence: keep the best (highest confidence) frame during confirmation
+        self._best_evidence_frame: Optional[np.ndarray | Image.Image] = None
+        self._best_confidence: float = 0.0
+        self._best_event: Optional[DetectionEvent] = None
 
         # Queue for failed uploads — retried in background
         self._retry_queue: deque[AlertPayload] = deque(maxlen=100)
@@ -52,6 +78,11 @@ class AlertService:
 
         # Ensure alerts directory exists
         os.makedirs(self._config.alerts_directory, exist_ok=True)
+
+    @property
+    def state(self) -> str:
+        """Current alert state machine state."""
+        return self._state.value
 
     def start_retry_worker(self) -> None:
         """Start the background retry thread for failed uploads."""
@@ -75,43 +106,81 @@ class AlertService:
         evidence_frame: Optional[np.ndarray | Image.Image] = None,
     ) -> bool:
         """
-        Evaluate a DetectionEvent and trigger an alert if it meets criteria.
+        Feed a DetectionEvent into the confirmation state machine.
 
         Args:
             event: The detection event to evaluate.
             evidence_frame: The frame to save as visual evidence.
 
         Returns:
-            True if an alert was created and dispatched.
+            True if an alert was dispatched (only on confirmed anomaly).
         """
-        # Only alert on anomalies above threshold
-        if event.event_type != EventType.ANOMALY:
+        is_anomaly = (
+            event.event_type == EventType.ANOMALY
+            and event.confidence >= self._config.confidence_threshold
+        )
+
+        # ── COOLDOWN: suppress all alerts until timer expires ──
+        if self._state == AlertState.COOLDOWN:
+            elapsed = time.monotonic() - self._last_alert_time
+            if elapsed >= self._config.cooldown_seconds:
+                self._transition_to(AlertState.NORMAL)
             return False
 
-        if event.confidence < self._config.confidence_threshold:
-            logger.debug(
-                "Track %d: anomaly below threshold (%.2f < %.2f)",
-                event.track_id, event.confidence, self._config.confidence_threshold,
-            )
+        # ── NORMAL / SUSPECTED: accumulate or reset ──
+        if is_anomaly:
+            self._consecutive_anomaly_count += 1
+
+            # Track the best evidence frame (highest confidence) during confirmation window
+            if event.confidence > self._best_confidence:
+                self._best_confidence = event.confidence
+                self._best_evidence_frame = evidence_frame
+                self._best_event = event
+
+            if self._state == AlertState.NORMAL:
+                self._transition_to(AlertState.SUSPECTED)
+
+            # Check if consecutive count meets confirmation threshold
+            if self._consecutive_anomaly_count >= self._config.confirmation_frames:
+                return self._dispatch_alert()
+
+            return False
+        else:
+            # Normal frame breaks the anomaly streak
+            if self._state == AlertState.SUSPECTED:
+                self._reset_streak()
+                self._transition_to(AlertState.NORMAL)
             return False
 
-        # Throttle: one alert per track_id
-        if self._alert_triggered.get(event.track_id, False):
+    def _dispatch_alert(self) -> bool:
+        """
+        Confirmed anomaly: save evidence, send to backend, enter cooldown.
+        """
+        event = self._best_event
+        evidence = self._best_evidence_frame
+
+        if event is None:
+            self._reset_streak()
             return False
 
-        self._alert_triggered[event.track_id] = True
+        logger.info(
+            "ANOMALY CONFIRMED: %d consecutive frames | best confidence=%.1f%%",
+            self._consecutive_anomaly_count,
+            self._best_confidence * 100,
+        )
 
         # Save evidence image
-        image_path, image_name = self._save_evidence(event.track_id, evidence_frame)
+        image_path, image_name = self._save_evidence(event.track_id, evidence)
         if not image_path:
-            logger.warning("Track %d: could not save evidence frame — skipping alert", event.track_id)
+            logger.warning("Could not save evidence frame — skipping alert dispatch")
+            self._reset_streak()
             return False
 
         # Build alert payload
         timestamp_iso = event.timestamp.strftime("%Y-%m-%dT%H:%M:%S")
         payload = AlertPayload(
             class_name=event.class_name,
-            confidence=event.confidence,
+            confidence=self._best_confidence,
             timestamp=timestamp_iso,
             latitude=self._config.latitude,
             longitude=self._config.longitude,
@@ -125,25 +194,40 @@ class AlertService:
         if success:
             payload.upload_status = "Uploaded"
             logger.info(
-                "Alert uploaded: Track %d | %s (%.1f%%)",
-                event.track_id, event.class_name, event.confidence * 100,
+                "Alert dispatched to backend: %s (%.1f%%)",
+                event.class_name, self._best_confidence * 100,
             )
         else:
             payload.upload_status = "Pending"
             self._retry_queue.append(payload)
-            logger.warning(
-                "Alert queued for retry: Track %d | %s (%.1f%%)",
-                event.track_id, event.class_name, event.confidence * 100,
-            )
+            logger.warning("Alert queued for retry (backend unreachable)")
 
-        # Persist to CSV (always, regardless of upload status)
+        # Persist to CSV
         self._write_csv(payload)
+
+        # Enter cooldown
+        self._last_alert_time = time.monotonic()
+        self._reset_streak()
+        self._transition_to(AlertState.COOLDOWN)
 
         return True
 
+    def _transition_to(self, new_state: AlertState) -> None:
+        """Log state transitions at DEBUG level to keep terminal clean."""
+        if self._state != new_state:
+            logger.debug("Alert state: %s -> %s", self._state.value, new_state.value)
+            self._state = new_state
+
+    def _reset_streak(self) -> None:
+        """Reset the confirmation window accumulators."""
+        self._consecutive_anomaly_count = 0
+        self._best_confidence = 0.0
+        self._best_evidence_frame = None
+        self._best_event = None
+
     def clear_track(self, track_id: int) -> None:
-        """Clear the alert throttle for a specific track (when track is lost)."""
-        self._alert_triggered.pop(track_id, None)
+        """No-op for global state machine (kept for interface compatibility)."""
+        pass
 
     def _save_evidence(
         self,
@@ -170,10 +254,9 @@ class AlertService:
                 evidence_frame.save(image_path)
             else:
                 cv2.imwrite(image_path, evidence_frame)
-            logger.info("Evidence saved: %s", image_path)
             return image_path, image_name
         except Exception:
-            logger.exception("Failed to save evidence for Track %d", track_id)
+            logger.exception("Failed to save evidence frame")
             return "", ""
 
     def _write_csv(self, payload: AlertPayload) -> None:
@@ -201,7 +284,6 @@ class AlertService:
                     payload.image_path,
                     payload.upload_status,
                 ])
-            logger.info("CSV metadata recorded: %s", csv_path)
         except Exception:
             logger.exception("Failed to write CSV metadata")
 
@@ -213,19 +295,13 @@ class AlertService:
                 continue
 
             payload = self._retry_queue.popleft()
-            logger.info("Retrying upload: Track %d | %s", payload.track_id, payload.class_name)
+            logger.info("Retrying upload: %s", payload.class_name)
 
             success = self._api_client.send_alert(payload)
             if success:
                 payload.upload_status = "Uploaded"
-                logger.info("Retry succeeded: Track %d", payload.track_id)
-                # Update CSV would require rewrite — for now, log success
+                logger.info("Retry succeeded")
             else:
-                # Re-enqueue if still failing
                 self._retry_queue.append(payload)
-                logger.warning(
-                    "Retry failed, re-queued: Track %d (%d pending)",
-                    payload.track_id, len(self._retry_queue),
-                )
-                # Back off before next attempt
+                logger.warning("Retry failed, re-queued (%d pending)", len(self._retry_queue))
                 self._shutdown_event.wait(timeout=self._api_client.retry_delay)

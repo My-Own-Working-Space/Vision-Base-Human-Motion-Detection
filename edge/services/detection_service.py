@@ -50,23 +50,45 @@ class DetectionService:
             device_mode=self._config.device_mode,
         )
 
-        lstm_path = self._config.lstm_model_path
-        if os.path.exists(lstm_path):
-            from inference.resnet_lstm_classifier import ResNetLSTMClassifier
+        model_path = self._config.lstm_model_path
+        if os.path.exists(model_path):
+            self._classifier = self._load_classifier(model_path)
+            if self._classifier is not None:
+                self._classifier.grace_period = self._state_config.grace_period
+        else:
+            logger.warning("Classifier model not found at: %s — running detection-only mode", model_path)
 
-            logger.info("Initializing ResNet18 + LSTM classifier...")
-            self._classifier = ResNetLSTMClassifier(
-                model_path=lstm_path,
+    def _load_classifier(self, model_path: str):
+        """
+        Auto-detect model architecture from checkpoint and load the
+        appropriate classifier (MobileNetV3 single-frame or ResNet18+LSTM).
+        """
+        import torch
+
+        checkpoint = torch.load(model_path, map_location="cpu")
+        if not isinstance(checkpoint, dict):
+            logger.warning("Unexpected checkpoint format at: %s", model_path)
+            return None
+
+        # Detect architecture by inspecting state_dict key patterns
+        keys = set(checkpoint.keys())
+        is_mobilenetv3 = any(k.startswith("conv_stem") for k in keys)
+
+        if is_mobilenetv3:
+            from inference.mobilenetv3_classifier import MobileNetV3Classifier
+
+            logger.info("Detected MobileNetV3 architecture — loading single-frame classifier...")
+            return MobileNetV3Classifier(
+                model_path=model_path,
                 sequence_length=self._config.sequence_length,
             )
-            self._classifier.grace_period = self._state_config.grace_period
         else:
-            logger.warning("LSTM model not found at: %s — running detection-only mode", lstm_path)
+            from inference.resnet_lstm_classifier import ResNetLSTMClassifier
 
-        if self._config.target_fps_warning_needed:
-            logger.warning(
-                "Target FPS (%d) < training FPS (%d) — classification may degrade",
-                self._config.lstm_train_fps, self._config.lstm_train_fps,
+            logger.info("Detected ResNet18+LSTM architecture — loading temporal classifier...")
+            return ResNetLSTMClassifier(
+                model_path=model_path,
+                sequence_length=self._config.sequence_length,
             )
 
     @property

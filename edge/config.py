@@ -63,6 +63,8 @@ class StateMachineConfig:
 class AlertConfig:
     """Alert thresholds and behavior."""
     confidence_threshold: float = 0.70
+    confirmation_frames: int = 3
+    cooldown_seconds: float = 60.0
     alerts_directory: str = "alerts"
     csv_filename: str = "metadata.csv"
     evidence_frame_index: int = 7
@@ -138,6 +140,8 @@ def load_config() -> EdgeConfig:
         ),
         alert=AlertConfig(
             confidence_threshold=float(os.getenv("ALERT_CONFIDENCE_THRESHOLD", "0.70")),
+            confirmation_frames=int(os.getenv("ALERT_CONFIRMATION_FRAMES", "3")),
+            cooldown_seconds=float(os.getenv("ALERT_COOLDOWN_SECONDS", "60.0")),
             alerts_directory=os.getenv("ALERTS_DIRECTORY", "alerts"),
             csv_filename=os.getenv("ALERTS_CSV_FILENAME", "metadata.csv"),
             evidence_frame_index=int(os.getenv("EVIDENCE_FRAME_INDEX", "7")),
