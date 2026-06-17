@@ -9,27 +9,28 @@ No service creates its own dependencies.
 """
 
 from __future__ import annotations
+from edge.ui.stream_renderer import StreamRenderer
+from edge.services.alert_service import AlertService
+from edge.services.detection_service import DetectionService
+from edge.services.camera_service import CameraService
+from edge.clients.api_client import ApiClient
+from edge.models import EventType
+from edge.logging_config import setup_logging, get_logger
+from edge.config import load_config
+import uvicorn
+from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi import FastAPI, Request
 
 import os
 import sys
-from typing import Generator
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Generator
 
-# Ensure project root is on the path for inference module imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training")))
-
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, HTMLResponse
-import uvicorn
-
-from edge.config import load_config
-from edge.logging_config import setup_logging, get_logger
-from edge.models import EventType
-from edge.clients.api_client import ApiClient
-from edge.services.camera_service import CameraService
-from edge.services.detection_service import DetectionService
-from edge.services.alert_service import AlertService
-from edge.ui.stream_renderer import StreamRenderer
+# Ensure project root is on the path for inference module imports BEFORE importing edge modules
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "training")))
 
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -75,7 +76,29 @@ detection_service.initialize()
 alert_service.start_retry_worker()
 
 # ── FastAPI Application ───────────────────────────────────────────────────────
-app = FastAPI(title="Edge Device — Suspicious Behavior Detection")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    Manage application lifespan: startup and shutdown.
+
+    Startup: All dependencies are already initialized at module level.
+    Shutdown: Clean up resources.
+    """
+    # Startup
+    yield
+
+    # Shutdown
+    alert_service.stop_retry_worker()
+    camera_service.close()
+    logger.info("Edge device shutdown complete.")
+
+
+app = FastAPI(
+    title="Edge Device — Suspicious Behavior Detection",
+    lifespan=lifespan,
+)
 
 
 def generate_frames() -> Generator[bytes, None, None]:
@@ -131,7 +154,8 @@ def index(request: Request):
     """System status and configuration."""
     accept_header = request.headers.get("accept", "")
     if "text/html" in accept_header:
-        html_path = os.path.join(os.path.dirname(__file__), "ui", "dashboard.html")
+        html_path = os.path.join(os.path.dirname(
+            __file__), "ui", "dashboard.html")
         if os.path.exists(html_path):
             with open(html_path, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
@@ -166,10 +190,11 @@ def video_feed():
 def get_alerts_history():
     """Return recent alerts logged locally in the CSV file."""
     import csv
-    csv_path = os.path.join(config.alert.alerts_directory, config.alert.csv_filename)
+    csv_path = os.path.join(config.alert.alerts_directory,
+                            config.alert.csv_filename)
     if not os.path.exists(csv_path):
         return []
-        
+
     alerts = []
     try:
         with open(csv_path, mode="r", encoding="utf-8") as f:
@@ -183,17 +208,9 @@ def get_alerts_history():
                 })
     except Exception as e:
         logger.error("Error reading alert CSV history: %s", e)
-        
+
     # Return latest alerts first (UI displays them accordingly, but let's return all)
     return alerts
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    """Clean up resources on server shutdown."""
-    alert_service.stop_retry_worker()
-    camera_service.close()
-    logger.info("Edge device shutdown complete.")
 
 
 if __name__ == "__main__":
