@@ -4,7 +4,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C.svg?logo=pytorch)](https://pytorch.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com/)
 
-An advanced, real-time AI surveillance system designed to detect and classify anomalous human behaviors (such as loitering, running, intruding, and falling). The system combines state-of-the-art spatial object tracking with temporal sequence analysis to ensure highly accurate, production-grade security monitoring.
+An advanced, real-time AI surveillance system designed to detect and classify anomalous human behaviors (such as loitering, running, intruding, and falling). The system combines state-of-the-art spatial object tracking with real-time behavior classification to ensure highly accurate, production-grade security monitoring.
 
 ## Architecture Overview
 
@@ -13,9 +13,9 @@ The system follows a **clean event-driven architecture** where the Raspberry Pi 
 ```
 Camera → CameraService → DetectionService → AlertService → ApiClient → Backend
               ↓                   ↓                ↓
-         frame capture      DetectionEvent     threshold check
-         FPS throttle       (type, conf, ts)   retry queue
-         state machine                         CSV persistence
+         frame capture      DetectionEvent     state machine
+         FPS throttle       (type, conf, ts)   confirmation & cooldown
+         state machine                         CSV & local persistence
 ```
 
 ### Data Flow
@@ -23,18 +23,19 @@ Camera → CameraService → DetectionService → AlertService → ApiClient →
 1. **CameraService** captures frames from a camera/video source, applies FPS throttling, resizes to target width, and manages the `IS_PROCESSING ↔ SLEEPING` state machine.
 
 2. **DetectionService** receives raw frames and runs the ML pipeline as a black box:
-   - **YOLOv8 + ByteTrack** detects and tracks persons with persistent IDs
-   - **ResNet18** extracts 512-dimensional spatial features per person crop
-   - **LSTM** classifies the temporal sequence (16-frame sliding window) as Normal or Anomaly
-   - Returns a `DetectionEvent(event_type, confidence, timestamp)` — nothing more
+   - **YOLOv8 + ByteTrack** detects and tracks persons with persistent IDs.
+   - **Classifier (Auto-Detected)**:
+     - **MobileNetV3-Large**: Single-frame classifier model (`mobilenetv3_ucf_crime.pt`) classifying behavior on individual crops.
+     - **ResNet18 + LSTM**: Sequence classifier using a sliding window buffer.
+   - Returns a `DetectionEvent(event_type, confidence, timestamp)` — nothing more.
 
-3. **AlertService** evaluates each `DetectionEvent`:
-   - Checks if `confidence ≥ threshold` (configurable, default 0.70)
-   - Throttles to one alert per track ID
-   - Saves evidence image to local `alerts/` directory
-   - Dispatches to Backend via **ApiClient**
-   - Queues failed uploads for **automatic retry** (background thread)
-   - Persists all alerts to CSV audit ledger (regardless of upload status)
+3. **AlertService** evaluates each `DetectionEvent` using a **Confirmation & Cooldown State Machine**:
+   - **NORMAL**: Scans the camera stream.
+   - **SUSPECTED**: Initiated upon finding anomaly frames.
+   - **ANOMALY CONFIRMED**: Triggered only if `ALERT_CONFIRMATION_FRAMES` (default 3) consecutive frames classify as an anomaly. Gathers the highest confidence frame as evidence, logs to CSV, and dispatches to Backend via **ApiClient**.
+   - **COOLDOWN**: Active after dispatching an alert to suppress duplicate alarms for `ALERT_COOLDOWN_SECONDS` (default 60s). Transitions back to `NORMAL` once elapsed.
+   - Queues failed uploads for **automatic retry** (background thread).
+   - Persists all alerts to CSV audit ledger `alerts/metadata.csv`.
 
 4. **ApiClient** is a pure HTTP transport layer — sends multipart/form-data POST to the Backend API. No business logic.
 
@@ -50,28 +51,28 @@ Camera → CameraService → DetectionService → AlertService → ApiClient →
 │  │              │    │                  │    │                   │      │
 │  │ CameraService│───▶│ DetectionService │───▶│  AlertService     │      │
 │  │              │    │                  │    │                   │      │
-│  │ • frame cap  │    │ • YOLO + Track   │    │ • threshold check │      │
-│  │ • FPS ctrl   │    │ • ResNet18 feat  │    │ • CSV persistence │      │
-│  │ • state mach │    │ • LSTM classify  │    │ • retry queue     │      │
-│  │ • resize     │    │                  │    │                   │      │
+│  │ • frame cap  │    │ • YOLO + Track   │    │ • confirmation SM │      │
+│  │ • FPS ctrl   │    │ • Auto-Detect    │    │ • cooldown timer  │      │
+│  │ • state mach │    │   Classifier     │    │ • CSV persistence │      │
+│  │ • resize     │    │                  │    │ • retry queue     │      │
 │  └──────────────┘    │  Returns:        │    └────────┬──────────┘      │
 │         │            │  DetectionEvent  │             │                  │
 │         │            │  (type,conf,ts)  │             │                  │
 │         │            └──────────────────┘             │                  │
 │         │                                             │                  │
-│         ▼                                             ▼                  │
-│  ┌──────────────┐                          ┌──────────────────┐         │
-│  │              │                          │                  │         │
-│  │StreamRenderer│                          │    ApiClient     │────────▶│ Backend API
-│  │              │                          │                  │         │
-│  │ • annotate   │                          │ • POST multipart │         │
-│  │ • MJPEG enc  │                          │ • health check   │         │
-│  │ • HUD        │                          │ • timeout/retry  │         │
-│  └──────────────┘                          └──────────────────┘         │
-│         │                                                               │
-│         ▼                                                               │
-│    FastAPI /video                                                       │
-│    (MJPEG Stream)                                                       │
+│         │                                             ▼                  │
+│         ▼                                    ┌──────────────────┐         │
+│  ┌──────────────┐                            │                  │         │
+│  │              │                            │    ApiClient     │────────▶│ Backend API
+│  │StreamRenderer│                            │                  │         │
+│  │ • annotate   │                            │ • POST multipart │         │
+│  │ • MJPEG enc  │                            │ • health check   │         │
+│  │ • HUD        │                            │ • timeout/retry  │         │
+│  └──────────────┘                            └──────────────────┘         │
+│         │                                                                 │
+│         ▼                                                                 │
+│    FastAPI /video                                                         │
+│    (MJPEG Stream)                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -89,6 +90,13 @@ Camera → CameraService → DetectionService → AlertService → ApiClient →
 ## Repository Structure
 
 ```
+backend/                           # FastAPI Mock Backend Service
+├── app.py                         # Unified structured logger & router entrypoint
+├── routes/
+│   ├── alerts.py                  # Standard alert listing & count endpoints
+│   └── detections.py              # Multipart receiver endpoint for edge uploads
+├── services/                      # Backend storage & aggregation logic
+└── storage/                       # Thread-safe in-memory cache
 edge/                              # Production edge runtime
 ├── main.py                        # Entry point — wires services via DI
 ├── config.py                      # Configuration (env vars → frozen dataclasses)
@@ -96,19 +104,18 @@ edge/                              # Production edge runtime
 ├── logging_config.py              # Structured logging setup
 ├── services/
 │   ├── camera_service.py          # Frame capture, FPS throttle, state machine
-│   ├── detection_service.py       # YOLO + LSTM → DetectionEvent
-│   └── alert_service.py           # Threshold, retry queue, CSV persistence
+│   ├── detection_service.py       # YOLO + Classifiers → DetectionEvent
+│   └── alert_service.py           # Confirmation + cooldown state machine, CSV
 ├── clients/
 │   └── api_client.py              # Pure HTTP transport to Backend
 └── ui/
     └── stream_renderer.py         # FastAPI MJPEG stream (presentation only)
 inference/                         # ML models — treated as black box
 ├── yolo_detector.py               # YOLOv8 + ByteTrack tracking
+├── mobilenetv3_classifier.py      # MobileNetV3 single-frame classifier (timm)
 ├── resnet_lstm_classifier.py      # ResNet18 + LSTM temporal classifier
 └── bytetrack_custom.yaml          # ByteTrack configuration
-training/                          # Training scripts (not part of edge runtime)
 models/                            # Pre-trained model weights (.pt, .pth)
-tests/                             # Test suites
 ```
 
 ## Getting Started
@@ -128,72 +135,70 @@ cp .env.example .env
 # Edit .env with your camera source, API URL, coordinates, etc.
 ```
 
-All configuration is loaded from environment variables — see `.env.example` for the full list.
+### 3. Run the Services
 
-### 3. Run the Edge Device
-
+**Mock Backend Service (Terminal 1)**:
 ```bash
-# New event-driven architecture
-python edge/main.py
-
-# Legacy monolithic app (still functional but deprecated)
-python inference/app.py
+./.venv/bin/uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The annotated AI video stream will be available at: **http://localhost:8000/video**
+**Edge Client Device (Terminal 2)**:
+```bash
+./.venv/bin/python edge/main.py
+```
 
-### 4. API Endpoints
+The annotated AI video stream will be available at: **http://localhost:8001/video**
+The Edge Client Dashboard is at: **http://localhost:8001**
+
+### 4. API Endpoints (Edge Client)
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/` | System status and configuration |
+| `GET` | `/` | System status, configurations, and Dashboard interface |
 | `GET` | `/video` | Live annotated MJPEG video stream |
+| `GET` | `/api/alerts-history` | Fetch local confirmed anomalies list from CSV logs |
 
 ## Configuration Reference
 
 | Variable | Default | Description |
 |---|---|---|
-| `IP_CAMERA_URL` | `0` | Camera source (0=webcam, RTSP URL, or file path) |
+| `IP_CAMERA_URL` | `0` | Camera source (0=webcam, RTSP URL, or HTTP camera URL) |
 | `TARGET_FPS` | `8` | Target processing FPS |
-| `DEVICE_MODE` | `server` | `embedded` (Jetson/RPi) or `server` (desktop/cloud) |
-| `PROCESSING_DURATION` | `2.0` | AI active burst duration (seconds) |
-| `SLEEP_DURATION` | `3.0` | Watchdog-only rest period (seconds) |
-| `MOTION_THRESHOLD` | `5000` | Base pixel diff threshold for motion |
-| `ALERT_CONFIDENCE_THRESHOLD` | `0.70` | Minimum confidence to trigger alert |
-| `DASHBOARD_API_URL` | `http://localhost:5000` | Backend API base URL |
-| `DETECTIONS_ENDPOINT` | `/api/detections` | Backend detections endpoint |
-| `API_MAX_RETRIES` | `3` | Max retry attempts for failed uploads |
-| `LATITUDE` / `LONGITUDE` | `10.7769` / `106.7009` | Device GPS coordinates |
+| `LSTM_MODEL_PATH` | `models/mobilenetv3_ucf_crime.pt` | Classifier weights (auto-detects architecture) |
+| `PROCESSING_DURATION` | `999999.0` | Force continuous processing mode |
+| `SLEEP_DURATION` | `0.0` | rest period (seconds) |
+| `ALERT_CONFIDENCE_THRESHOLD` | `0.70` | Minimum confidence to register anomaly |
+| `ALERT_CONFIRMATION_FRAMES` | `3` | Consecutive anomaly frames to trigger dispatch |
+| `ALERT_COOLDOWN_SECONDS` | `60.0` | Mute duplicate alerts after confirmation |
+| `DASHBOARD_API_URL` | `http://localhost:8000` | Backend API URL |
 
-## State Machine
-
-| State | What Runs | CPU Load | Duration |
-|---|---|---|---|
-| `IS_PROCESSING` | Full YOLO → ByteTrack → ResNet18 → LSTM | **High** | `PROCESSING_DURATION` (default 2s) |
-| `SLEEPING` | Frame differencing watchdog only | **Minimal** | `SLEEP_DURATION` (default 3s) or until motion detected |
-
-## Alert Pipeline
+## State Machine (Alert Confirmation Flow)
 
 ```
-[LSTM Inference] → DetectionEvent (type=ANOMALY, conf > threshold)
-                        │
-                        ▼
-           [AlertService.evaluate()]
-                        │
-         ┌──────────────┴──────────────┐
-         ▼                             ▼
-  [Save Evidence Image]       [ApiClient.send_alert()]
-  alerts/*.jpg                   POST /api/detections
-         │                             │
-         ▼                     ┌───────┴───────┐
-  [CSV Audit Ledger]           ▼               ▼
-  alerts/metadata.csv     Success          Failure
-                          (Uploaded)     → Retry Queue
-                                          (background)
+       [NORMAL]
+          │
+  Anomaly detected
+          │
+          ▼
+     [SUSPECTED] ◀── Normal frame breaks streak ──┐
+          │                                      │
+Consecutive count ≥ threshold                    │
+          │                                      │
+          ▼                                      │
+  [ANOMALY CONFIRMED]                            │
+          │                                      │
+   1. Save evidence                              │
+   2. Send POST /api/detections                  │
+   3. Log alerts/metadata.csv                    │
+          │                                      │
+          ▼                                      │
+      [COOLDOWN]                                 │
+          │                                      │
+    Timer expires ───────────────────────────────┘
 ```
 
 ## Dataset
 
-Trained on the **ShanghaiTech Campus** dataset — 13 scenes, 317,398 frames, 130 abnormal events including chasing, brawling, and sudden motion anomalies with pixel-level annotations.
+Trained on the **UCF Crime** & **ShanghaiTech Campus** datasets for human-motion anomaly behavior categorization and abnormal incident alerting.
 
 > Liu, W., Luo, W., Lian, D., & Gao, S. (2018). *Future Frame Prediction for Anomaly Detection — A New Baseline*. CVPR 2018.
