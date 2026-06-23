@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: vision-backend
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  edge:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+    container_name: vision-edge
+    ports:
+      - "8001:8001"
+    # Load all environment variables from local .env file
+    env_file:
+      - .env
+    environment:
+      # Override the backend URL to point to the docker-compose backend service
+      - DASHBOARD_API_URL=http://backend:8000
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8001
+    volumes:
+      # Persist CSV alerts logs and evidence JPG images to host folder
+      - ./alerts:/app/alerts
+      # Map models directory to allow updating weights without rebuilding image
+      - ./models:/app/models
+    # Uncomment the following section to enable local USB webcam access (e.g. /dev/video0)
+    # devices:
+    #   - "/dev/video0:/dev/video0"
+    depends_on:
+      - backend
+    restart: unless-stopped
