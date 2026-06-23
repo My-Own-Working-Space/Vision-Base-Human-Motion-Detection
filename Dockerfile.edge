@@ -8,9 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy and install python dependencies
+# Copy requirements first
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Install PyTorch CPU first to avoid downloading ~3GB of CUDA dependencies (reduces size to ~200MB)
+RUN pip install --no-cache-dir torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Copy source code and models
 COPY edge/ /app/edge/
