@@ -27,4 +27,4 @@ RUN mkdir -p /app/alerts
 EXPOSE 8001
 
 # Run the edge service main script
-CMD ["python", "edge/main.py"]
+CMD ["python", "-m", "edge.main"]
