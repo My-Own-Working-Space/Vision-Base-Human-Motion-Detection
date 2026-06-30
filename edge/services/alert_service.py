@@ -28,6 +28,7 @@ import numpy as np
 from PIL import Image
 
 from edge.clients.api_client import ApiClient
+from edge.clients.pms_bridge_client import PmsBridgeClient
 from edge.config import AlertConfig
 from edge.logging_config import get_logger
 from edge.models import AlertPayload, DetectionEvent, EventType
@@ -57,27 +58,29 @@ class AlertService:
         self,
         alert_config: AlertConfig,
         api_client: ApiClient,
+        pms_bridge: PmsBridgeClient | None = None,
     ) -> None:
         self._config = alert_config
         self._api_client = api_client
+        self._pms_bridge = pms_bridge
+        self._drone_id = ""
 
-        # State machine
         self._state = AlertState.NORMAL
-        self._consecutive_anomaly_count: int = 0
-        self._last_alert_time: float = 0.0
+        self._consecutive_anomaly_count = 0
+        self._last_alert_time = 0.0
 
-        # Evidence: keep the best (highest confidence) frame during confirmation
-        self._best_evidence_frame: Optional[np.ndarray | Image.Image] = None
-        self._best_confidence: float = 0.0
-        self._best_event: Optional[DetectionEvent] = None
+        self._best_evidence_frame = None
+        self._best_confidence = 0.0
+        self._best_event = None
 
-        # Queue for failed uploads — retried in background
-        self._retry_queue: deque[AlertPayload] = deque(maxlen=100)
-        self._retry_thread: Optional[threading.Thread] = None
+        self._retry_queue = deque(maxlen=100)
+        self._retry_thread = None
         self._shutdown_event = threading.Event()
 
-        # Ensure alerts directory exists
         os.makedirs(self._config.alerts_directory, exist_ok=True)
+
+    def set_drone_id(self, drone_id: str) -> None:
+        self._drone_id = drone_id
 
     @property
     def state(self) -> str:
@@ -189,7 +192,7 @@ class AlertService:
             track_id=event.track_id,
         )
 
-        # Attempt API upload
+        # Attempt API upload (original mock backend)
         success = self._api_client.send_alert(payload)
         if success:
             payload.upload_status = "Uploaded"
@@ -201,6 +204,17 @@ class AlertService:
             payload.upload_status = "Pending"
             self._retry_queue.append(payload)
             logger.warning("Alert queued for retry (backend unreachable)")
+
+        # Forward to PMS Bridge (if enabled)
+        if self._pms_bridge is not None:
+            try:
+                pms_success = self._pms_bridge.send_detection(payload, self._drone_id)
+                if pms_success:
+                    logger.info("Alert also forwarded to PMS backend successfully")
+                else:
+                    logger.warning("PMS Bridge forward failed (non-blocking)")
+            except Exception as ex:
+                logger.warning("PMS Bridge forward error (non-blocking): %s", ex)
 
         # Persist to CSV
         self._write_csv(payload)

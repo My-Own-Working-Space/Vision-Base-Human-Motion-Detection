@@ -26,6 +26,7 @@ from edge.config import load_config
 from edge.logging_config import setup_logging, get_logger
 from edge.models import EventType
 from edge.clients.api_client import ApiClient
+from edge.clients.pms_bridge_client import PmsBridgeClient
 from edge.services.camera_service import CameraService
 from edge.services.detection_service import DetectionService
 from edge.services.alert_service import AlertService
@@ -49,6 +50,21 @@ logger.info(
 # ── Dependency Injection ──────────────────────────────────────────────────────
 api_client = ApiClient(config.api)
 
+# PMS Bridge (conditional — only active when PMS_BRIDGE_ENABLED=true)
+pms_bridge: PmsBridgeClient | None = None
+if config.pms.enabled:
+    pms_bridge = PmsBridgeClient(
+        pms_base_url=config.pms.base_url,
+        pms_endpoint=config.pms.endpoint,
+        timeout_seconds=config.pms.timeout_seconds,
+    )
+    logger.info(
+        "PMS Bridge ENABLED: forwarding detections to %s%s",
+        config.pms.base_url, config.pms.endpoint,
+    )
+else:
+    logger.info("PMS Bridge DISABLED (set PMS_BRIDGE_ENABLED=true to enable)")
+
 camera_service = CameraService(
     camera_config=config.camera,
     state_config=config.state_machine,
@@ -62,6 +78,7 @@ detection_service = DetectionService(
 alert_service = AlertService(
     alert_config=config.alert,
     api_client=api_client,
+    pms_bridge=pms_bridge,
 )
 
 renderer = StreamRenderer(
@@ -73,6 +90,46 @@ detection_service.initialize()
 
 # Start background retry worker for failed alerts
 alert_service.start_retry_worker()
+
+def pms_bridge_worker(bridge, alert_svc, serial, sw_version):
+    import time
+    drone_id = None
+    while drone_id is None:
+        try:
+            reg_info = bridge.register(serial, sw_version)
+            if reg_info and "droneId" in reg_info:
+                drone_id = reg_info["droneId"]
+                logger.info(f"Device registered with PMS. Drone ID: {drone_id}")
+                alert_svc.set_drone_id(drone_id)
+            else:
+                status = reg_info.get("status") if reg_info else "Offline"
+                logger.warning(f"Device registration status: {status}. Retrying in 10s...")
+        except Exception as e:
+            logger.warning(f"Error during registration: {e}")
+        time.sleep(10)
+
+    battery = 95.0
+    while True:
+        try:
+            success = bridge.send_heartbeat(drone_id, battery, 40.0)
+            if success:
+                logger.info(f"Heartbeat sent to PMS. Battery: {battery}%")
+            else:
+                logger.warning("Failed to send heartbeat to PMS")
+            battery = max(10.0, battery - 0.1)
+        except Exception as e:
+            logger.warning(f"Error in heartbeat thread: {e}")
+        time.sleep(10)
+
+if pms_bridge is not None:
+    import threading
+    t = threading.Thread(
+        target=pms_bridge_worker,
+        args=(pms_bridge, alert_service, config.pms.serial_number, config.pms.software_version),
+        daemon=True
+    )
+    t.start()
+
 
 # ── FastAPI Application ───────────────────────────────────────────────────────
 app = FastAPI(title="Edge Device — Suspicious Behavior Detection")
@@ -150,6 +207,10 @@ def index(request: Request):
         },
         "model_loaded": detection_service.has_classifier,
         "api_backend": config.api.detections_url,
+        "pms_bridge": {
+            "enabled": config.pms.enabled,
+            "url": f"{config.pms.base_url}{config.pms.endpoint}" if config.pms.enabled else None,
+        },
     }
 
 

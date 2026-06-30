@@ -94,6 +94,16 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class PmsConfig:
+    enabled: bool = False
+    base_url: str = "http://localhost:5196"
+    endpoint: str = "/api/v1/vision/detections"
+    timeout_seconds: int = 5
+    serial_number: str = "RPI-123456"
+    software_version: str = "1.0.0"
+
+
+@dataclass(frozen=True)
 class EdgeConfig:
     """Root configuration container — aggregates all sub-configs."""
     camera: CameraConfig = field(default_factory=CameraConfig)
@@ -102,6 +112,7 @@ class EdgeConfig:
     alert: AlertConfig = field(default_factory=AlertConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    pms: PmsConfig = field(default_factory=PmsConfig)
 
 
 def load_config() -> EdgeConfig:
@@ -158,5 +169,13 @@ def load_config() -> EdgeConfig:
         server=ServerConfig(
             host=os.getenv("SERVER_HOST", "0.0.0.0"),
             port=int(os.getenv("SERVER_PORT", "8000")),
+        ),
+        pms=PmsConfig(
+            enabled=os.getenv("PMS_BRIDGE_ENABLED", "false").lower() in ("true", "1", "yes"),
+            base_url=os.getenv("PMS_BRIDGE_URL", "http://localhost:5196"),
+            endpoint=os.getenv("PMS_BRIDGE_ENDPOINT", "/api/v1/vision/detections"),
+            timeout_seconds=int(os.getenv("PMS_BRIDGE_TIMEOUT", "5")),
+            serial_number=os.getenv("PMS_BRIDGE_SERIAL", "RPI-123456"),
+            software_version=os.getenv("PMS_BRIDGE_SOFTWARE_VERSION", "1.0.0"),
         ),
     )
