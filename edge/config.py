@@ -75,6 +75,7 @@ class AlertConfig:
 @dataclass(frozen=True)
 class ApiConfig:
     """Backend API connection settings."""
+    enabled: bool = True
     base_url: str = "http://localhost:5000"
     detections_endpoint: str = "/api/detections"
     timeout_seconds: int = 5
@@ -160,6 +161,7 @@ def load_config() -> EdgeConfig:
             longitude=float(os.getenv("LONGITUDE", "106.7009")),
         ),
         api=ApiConfig(
+            enabled=os.getenv("DASHBOARD_API_ENABLED", "true").lower() in ("true", "1", "yes"),
             base_url=os.getenv("DASHBOARD_API_URL", "http://localhost:5000"),
             detections_endpoint=os.getenv("DETECTIONS_ENDPOINT", "/api/detections"),
             timeout_seconds=int(os.getenv("API_TIMEOUT_SECONDS", "5")),

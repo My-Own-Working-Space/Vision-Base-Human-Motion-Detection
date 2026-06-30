@@ -34,15 +34,9 @@ class ApiClient:
         return self._config.retry_delay_seconds
 
     def send_alert(self, payload: AlertPayload) -> bool:
-        """
-        POST an alert payload to the Backend API.
+        if not self._config.enabled:
+            return True
 
-        Args:
-            payload: The alert to transmit.
-
-        Returns:
-            True if the API responded with a success status code.
-        """
         url = self._config.detections_url
 
         try:
