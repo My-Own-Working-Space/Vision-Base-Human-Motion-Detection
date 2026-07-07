@@ -121,7 +121,7 @@ def load_config() -> EdgeConfig:
     project_root = Path(__file__).resolve().parent.parent
 
     # Resolve model paths relative to project root
-    default_lstm = str(project_root / "models" / "resnet_lstm_ucf_best.pth")
+    default_lstm = str(project_root / "models" / "cnn_lstm_ucf_fixed.pt")
     default_yolo = str(project_root / "models" / "yolov8n.pt")
     default_bytetrack = str(project_root / "inference" / "bytetrack_custom.yaml")
     default_motion_threshold = int(os.getenv("MOTION_THRESHOLD", "5000"))

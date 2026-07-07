@@ -90,6 +90,7 @@ class MobileNetV3Classifier:
         pil_image: Image.Image,
         track_id: int,
         full_frame: np.ndarray = None,
+        force_predict: bool = False,
     ) -> tuple[str, float, int]:
         """
         Classify behavior for a tracked person crop.

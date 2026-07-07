@@ -18,8 +18,9 @@ from typing import Generator
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training")))
 
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi import FastAPI, File, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
+import cv2
 import uvicorn
 
 from edge.config import load_config
@@ -247,6 +248,168 @@ def get_alerts_history():
         
     # Return latest alerts first (UI displays them accordingly, but let's return all)
     return alerts
+
+
+@app.post("/api/analyze")
+async def analyze_file(
+    file: UploadFile = File(...),
+    analysis_type: str = "General",
+):
+    """
+    Ad-hoc image and video analysis endpoint.
+
+    Accepts an image or video upload, runs YOLO person detection and behavior
+    classification, and returns structured detection results as JSON.
+    Called by PMS AIAnalysisRequestedConsumer.
+    """
+    import io
+    import tempfile
+    import os
+    import numpy as np
+    from PIL import Image as PILImage
+    from datetime import datetime
+
+    content_type = file.content_type.lower()
+    is_video = content_type.startswith("video/") or content_type in ["video/mp4", "video/x-msvideo", "video/quicktime", "video/webm"]
+    is_image = content_type.startswith("image/") or content_type in ["image/jpeg", "image/png", "image/webp", "image/tiff"]
+
+    if not is_video and not is_image:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unsupported file type: {file.content_type}. Allowed: images or videos."},
+        )
+
+    detections_output = []
+    width, height = 0, 0
+
+    if is_image:
+        try:
+            contents = await file.read()
+            pil_image = PILImage.open(io.BytesIO(contents)).convert("RGB")
+            frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+            height, width = frame.shape[:2]
+            
+            # Resize if wider than config
+            max_w = config.camera.max_frame_width
+            if width > max_w:
+                scale = max_w / width
+                frame = cv2.resize(frame, (max_w, int(height * scale)))
+                height, width = frame.shape[:2]
+
+            results = detection_service.process_frame(frame, force_predict=True)
+            for event, evidence in results:
+                det = {
+                    "trackId": event.track_id,
+                    "eventType": event.event_type.value,
+                    "className": event.class_name,
+                    "confidence": round(event.confidence, 4),
+                    "timestamp": event.timestamp.isoformat(),
+                    "bufferLength": event.buffer_length,
+                }
+                if event.bbox:
+                    det["boundingBox"] = {
+                        "x1": event.bbox[0],
+                        "y1": event.bbox[1],
+                        "x2": event.bbox[2],
+                        "y2": event.bbox[3],
+                    }
+                detections_output.append(det)
+        except Exception as e:
+            logger.error("Failed to process uploaded image: %s", e)
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Failed to process image: {str(e)}"},
+            )
+
+    elif is_video:
+        temp_fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(file.filename)[1])
+        try:
+            with os.fdopen(temp_fd, 'wb') as tmp:
+                tmp.write(await file.read())
+            
+            cap = cv2.VideoCapture(temp_path)
+            if not cap.isOpened():
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Failed to open video file: {file.filename}"},
+                )
+            
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            # Sample at 2 frames per second to optimize speed while catching motion
+            sample_interval = max(1, int(fps / 2))
+            frame_idx = 0
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frame_idx == 0:
+                    height, width = frame.shape[:2]
+
+                if frame_idx % sample_interval == 0:
+                    # Resize if wider than config
+                    h, w = frame.shape[:2]
+                    max_w = config.camera.max_frame_width
+                    if w > max_w:
+                        scale = max_w / w
+                        frame = cv2.resize(frame, (max_w, int(h * scale)))
+                    
+                    results = detection_service.process_frame(frame)
+                    for event, evidence in results:
+                        det = {
+                            "trackId": event.track_id,
+                            "eventType": event.event_type.value,
+                            "className": event.class_name,
+                            "confidence": round(event.confidence, 4),
+                            "timestamp": event.timestamp.isoformat(),
+                            "bufferLength": event.buffer_length,
+                            "frameIndex": frame_idx,
+                        }
+                        if event.bbox:
+                            det["boundingBox"] = {
+                                "x1": event.bbox[0],
+                                "y1": event.bbox[1],
+                                "x2": event.bbox[2],
+                                "y2": event.bbox[3],
+                            }
+                        detections_output.append(det)
+                        
+                frame_idx += 1
+                
+            cap.release()
+        except Exception as e:
+            logger.error("Failed to process uploaded video: %s", e)
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to process video: {str(e)}"},
+            )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    # Build summary
+    anomaly_count = sum(1 for d in detections_output if d["eventType"] == "Anomaly")
+    normal_count = sum(1 for d in detections_output if d["eventType"] == "Normal")
+    persons_detected = len(set(d["trackId"] for d in detections_output))
+
+    return {
+        "analysisType": analysis_type,
+        "analyzedAt": datetime.utcnow().isoformat() + "Z",
+        "mediaType": "Video" if is_video else "Image",
+        "fileSize": {"width": width, "height": height},
+        "summary": {
+            "personsDetected": persons_detected,
+            "anomalyCount": anomaly_count,
+            "normalCount": normal_count,
+            "hasAnomaly": anomaly_count > 0,
+        },
+        "detections": detections_output,
+        "modelInfo": {
+            "hasClassifier": detection_service.has_classifier,
+            "deviceMode": config.detection.device_mode,
+        },
+    }
 
 
 @app.on_event("shutdown")

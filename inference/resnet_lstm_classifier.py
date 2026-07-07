@@ -61,18 +61,33 @@ class OriginalTemporalModel(nn.Module):
         return out, None
 
 
+class MobileNetV3TemporalModel(nn.Module):
+    def __init__(self, input_dim=1280, hidden_dim=256, num_layers=1, num_classes=2):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True
+        )
+        self.head = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        last_step = lstm_out[:, -1, :]
+        out = self.head(last_step)
+        return out, None
+
+
 class ResNetLSTMClassifier:
     CLASS_NAMES = ['Normal', 'Anomaly']
 
     def __init__(self, model_path: str, sequence_length: int = 16, device: str = 'cpu'):
         self.device = torch.device(device)
         self.sequence_length = sequence_length
-
-        # ResNet18 spatial feature extractor (must match training-time pretrained weights)
-        self.backbone = models.resnet18(weights='IMAGENET1K_V1')
-        self.backbone.fc = nn.Identity()
-        self.backbone = self.backbone.to(self.device)
-        self.backbone.eval()
 
         # Load optimal threshold from training artifacts
         threshold_path = os.path.join(os.path.dirname(model_path), 'best_threshold.npy')
@@ -85,10 +100,12 @@ class ResNetLSTMClassifier:
 
         checkpoint = torch.load(model_path, map_location=self.device)
         
+        has_backbone = any(k.startswith('backbone.') for k in checkpoint.keys())
+
         # Dynamically determine model dimensions from checkpoint keys/shapes
-        input_dim = 512
+        input_dim = 1280 if has_backbone else 512
         hidden_dim = 256
-        num_layers = 2
+        num_layers = 1 if has_backbone else 2
         num_classes = 2
         
         if 'lstm.weight_ih_l0' in checkpoint:
@@ -103,10 +120,12 @@ class ResNetLSTMClassifier:
             
         if 'classifier.3.bias' in checkpoint:
             num_classes = checkpoint['classifier.3.bias'].shape[0]
+        elif 'head.1.bias' in checkpoint:
+            num_classes = checkpoint['head.1.bias'].shape[0]
             
         logger.info(
-            "Loading %s | Detected: input_dim=%d, hidden_dim=%d, num_layers=%d, num_classes=%d",
-            model_path, input_dim, hidden_dim, num_layers, num_classes,
+            "Loading %s | Detected: input_dim=%d, hidden_dim=%d, num_layers=%d, num_classes=%d, has_backbone=%s",
+            model_path, input_dim, hidden_dim, num_layers, num_classes, has_backbone
         )
         
         self.num_classes = num_classes
@@ -115,16 +134,38 @@ class ResNetLSTMClassifier:
         else:
             self.class_names = ['Normal'] + [f'Anomaly (Class {i})' for i in range(1, num_classes)]
 
-        # LSTM behavior classifier
-        self.temporal_model = OriginalTemporalModel(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            num_classes=num_classes
-        ).to(self.device)
+        if has_backbone:
+            import timm
+            self.backbone = timm.create_model('mobilenetv3_large_100', pretrained=False, num_classes=0)
+            backbone_state = {k.replace('backbone.', ''): v for k, v in checkpoint.items() if k.startswith('backbone.')}
+            self.backbone.load_state_dict(backbone_state)
+            self.backbone = self.backbone.to(self.device)
+            self.backbone.eval()
 
-        self.temporal_model.load_state_dict(checkpoint)
-        self.temporal_model.eval()
+            self.temporal_model = MobileNetV3TemporalModel(
+                input_dim=input_dim,
+                hidden_dim=hidden_dim,
+                num_layers=num_layers,
+                num_classes=num_classes
+            ).to(self.device)
+            temporal_state = {k: v for k, v in checkpoint.items() if not k.startswith('backbone.')}
+            self.temporal_model.load_state_dict(temporal_state)
+            self.temporal_model.eval()
+        else:
+            self.backbone = models.resnet18(weights='IMAGENET1K_V1')
+            self.backbone.fc = nn.Identity()
+            self.backbone = self.backbone.to(self.device)
+            self.backbone.eval()
+
+            self.temporal_model = OriginalTemporalModel(
+                input_dim=input_dim,
+                hidden_dim=hidden_dim,
+                num_layers=num_layers,
+                num_classes=num_classes
+            ).to(self.device)
+            self.temporal_model.load_state_dict(checkpoint)
+            self.temporal_model.eval()
+
         logger.info("Loaded checkpoint: %s", model_path)
 
         # Quality/blur check parameters
@@ -148,7 +189,7 @@ class ResNetLSTMClassifier:
             feat = self.backbone(img_tensor)   
         return feat.squeeze(0)                  
 
-    def predict(self, pil_image: Image.Image, track_id: int, full_frame: np.ndarray = None) -> tuple[str, float, int]:
+    def predict(self, pil_image: Image.Image, track_id: int, full_frame: np.ndarray = None, force_predict: bool = False) -> tuple[str, float, int]:
         """
         Classify behavior for a tracked person.
 
@@ -191,6 +232,11 @@ class ResNetLSTMClassifier:
         if track_id not in self.track_buffers:
             self.track_buffers[track_id] = deque(maxlen=self.sequence_length)
             self.track_frame_buffers[track_id] = deque(maxlen=self.sequence_length)
+
+        if force_predict:
+            while len(self.track_buffers[track_id]) < self.sequence_length - 1:
+                self.track_buffers[track_id].append(feat)
+                self.track_frame_buffers[track_id].append(frame_to_store)
 
         self.track_buffers[track_id].append(feat)
         self.track_frame_buffers[track_id].append(frame_to_store)

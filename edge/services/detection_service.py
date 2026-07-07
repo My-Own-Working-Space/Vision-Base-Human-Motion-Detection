@@ -99,12 +99,14 @@ class DetectionService:
     def process_frame(
         self,
         frame: np.ndarray,
+        force_predict: bool = False,
     ) -> list[tuple[DetectionEvent, Optional[np.ndarray]]]:
         """
         Run the full detection pipeline on a single frame.
 
         Args:
             frame: BGR frame from the camera.
+            force_predict: Whether to force classification even if buffer is not full.
 
         Returns:
             List of (DetectionEvent, evidence_frame_or_None) tuples.
@@ -128,7 +130,7 @@ class DetectionService:
 
             if self._classifier:
                 label, confidence, buf_len = self._classifier.predict(
-                    item["image"], track_id, full_frame=frame
+                    item["image"], track_id, full_frame=frame, force_predict=force_predict
                 )
                 event = self._label_to_event(
                     label, confidence, now, track_id, buf_len, (x1, y1, x2, y2)

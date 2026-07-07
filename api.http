@@ -34,3 +34,20 @@ Content-Disposition: form-data; name="file"; filename="alert_track_888_20260526_
 Content-Type: image/jpeg
 
 ./alerts/alert_track_888_20260526_171500.jpg
+
+###
+
+### 4. Ad-hoc Image Analysis (Called by PMS AIAnalysisRequestedConsumer)
+POST {{baseUrl}}/api/analyze
+Content-Type: multipart/form-data; boundary=AnalyzeBoundary
+
+--AnalyzeBoundary
+Content-Disposition: form-data; name="analysis_type"
+
+HumanMotionDetection
+--AnalyzeBoundary
+Content-Disposition: form-data; name="file"; filename="test_image.jpg"
+Content-Type: image/jpeg
+
+< ./alerts/alert_track_888_20260526_171500.jpg
+--AnalyzeBoundary--
