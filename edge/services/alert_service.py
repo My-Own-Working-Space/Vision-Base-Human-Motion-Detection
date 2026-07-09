@@ -172,8 +172,8 @@ class AlertService:
             self._best_confidence * 100,
         )
 
-        # Save evidence image
-        image_path, image_name = self._save_evidence(event.track_id, evidence)
+        # Save evidence image with bounding box drawn on it
+        image_path, image_name = self._save_evidence(event.track_id, evidence, event.bbox, event.class_name)
         if not image_path:
             logger.warning("Could not save evidence frame — skipping alert dispatch")
             self._reset_streak()
@@ -248,15 +248,37 @@ class AlertService:
         self,
         track_id: int,
         evidence_frame: Optional[np.ndarray | Image.Image],
+        bbox: Optional[tuple[int, int, int, int]] = None,
+        class_name: str = "Anomaly",
     ) -> tuple[str, str]:
         """
-        Save the evidence frame to the alerts directory.
+        Save the evidence frame to the alerts directory, drawing a bounding box if available.
 
         Returns:
             Tuple of (absolute_path, filename) or ("", "") on failure.
         """
         if evidence_frame is None:
             return "", ""
+
+        # Draw bounding box if present
+        if bbox is not None and len(bbox) == 4:
+            try:
+                x1, y1, x2, y2 = bbox
+                if isinstance(evidence_frame, Image.Image):
+                    from PIL import ImageDraw
+                    # Clone image to avoid modifying cached frames
+                    evidence_frame = evidence_frame.copy()
+                    draw = ImageDraw.Draw(evidence_frame)
+                    draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
+                    draw.text((x1, max(0, y1 - 15)), class_name, fill="red")
+                else:
+                    # OpenCV image (numpy array)
+                    evidence_frame = evidence_frame.copy()
+                    cv2.rectangle(evidence_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 3)
+                    cv2.putText(evidence_frame, class_name, (int(x1), int(max(0, y1 - 10))),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            except Exception as draw_ex:
+                logger.warning(f"Failed to draw bounding box on evidence: {draw_ex}")
 
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         image_name = f"alert_track_{track_id}_{timestamp_str}.jpg"

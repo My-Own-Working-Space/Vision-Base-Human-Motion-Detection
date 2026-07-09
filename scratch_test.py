@@ -27,7 +27,8 @@ payload = AlertPayload(
     longitude=106.7009,
     image_path="alerts/alert_track_2_20260526_172904_540897.jpg",
     image_name="alert_track_2_20260526_172904_540897.jpg",
-    track_id=2
+    track_id=2,
+    bbox=(100, 150, 400, 450)
 )
 
 success = client.send_detection(payload, drone_id="UAV001")
