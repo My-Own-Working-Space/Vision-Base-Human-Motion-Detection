@@ -75,6 +75,8 @@ class PmsBridgeClient:
                         "PMS Bridge: evidence file not found: %s", payload.image_path
                     )
 
+            bbox_str = ",".join(map(str, payload.bbox)) if payload.bbox else ""
+
             data = {
                 "drone_id": drone_id,
                 "class_name": payload.class_name,
@@ -83,6 +85,7 @@ class PmsBridgeClient:
                 "lat": f"{payload.latitude:.6f}",
                 "lng": f"{payload.longitude:.6f}",
                 "track_id": str(payload.track_id),
+                "bbox": bbox_str,
             }
 
             response = requests.post(

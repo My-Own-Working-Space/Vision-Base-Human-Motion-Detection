@@ -61,6 +61,7 @@ class AlertPayload:
     image_name: str
     track_id: int
     upload_status: str = "Pending"
+    bbox: Optional[tuple[int, int, int, int]] = None
 
 
 @dataclass

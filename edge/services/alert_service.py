@@ -190,6 +190,7 @@ class AlertService:
             image_path=image_path,
             image_name=image_name,
             track_id=event.track_id,
+            bbox=event.bbox,
         )
 
         # Attempt API upload (original mock backend)
