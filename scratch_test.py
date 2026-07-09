@@ -10,7 +10,13 @@ from edge.models import AlertPayload
 from dotenv import load_dotenv
 load_dotenv()
 
-pms_url = os.getenv("PMS_BRIDGE_URL", "http://188.166.191.199:5194")
+# PMS Backend URL Options:
+# - Local (Testing): http://localhost:5196
+# - Remote (Production): https://uavpms.ddns.net (Swagger: https://uavpms.ddns.net/swagger/index.html)
+pms_url = os.getenv("PMS_BRIDGE_URL", "http://localhost:5196")
+# Alternatively, uncomment the line below to use the production URL directly if environment variable is not set:
+# pms_url = os.getenv("PMS_BRIDGE_URL", "https://uavpms.ddns.net")
+
 client = PmsBridgeClient(pms_base_url=pms_url)
 
 payload = AlertPayload(
