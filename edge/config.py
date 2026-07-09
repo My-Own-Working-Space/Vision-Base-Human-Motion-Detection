@@ -97,6 +97,9 @@ class ServerConfig:
 @dataclass(frozen=True)
 class PmsConfig:
     enabled: bool = False
+    # PMS Backend URL Options:
+    # - Local (Testing): http://localhost:5196
+    # - Remote (Production): https://uavpms.ddns.net (Swagger: https://uavpms.ddns.net/swagger/index.html)
     base_url: str = "http://localhost:5196"
     endpoint: str = "/api/v1/vision/detections"
     timeout_seconds: int = 5

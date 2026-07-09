@@ -7,6 +7,9 @@ from edge.models import AlertPayload
 
 logger = get_logger(__name__)
 
+# PMS Backend URL Options:
+# - Local (Testing): http://localhost:5196
+# - Remote (Production): https://uavpms.ddns.net (Swagger: https://uavpms.ddns.net/swagger/index.html)
 DEFAULT_PMS_URL = "http://localhost:5196"
 DEFAULT_PMS_ENDPOINT = "/api/v1/vision/detections"
 
