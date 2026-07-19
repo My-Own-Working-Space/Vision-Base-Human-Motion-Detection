@@ -108,6 +108,21 @@ class PmsConfig:
 
 
 @dataclass(frozen=True)
+class RoboflowWorkflowConfig:
+    enabled: bool = False
+    api_key: str = ""
+    api_url: str = "https://serverless.roboflow.com"
+    workspace_name: str = "les-workspace-ijdwd"
+    workflow_id: str = "evn-object-detection-vevn-object-detection-cnyo0-1-rfdetr-small-t1-logic"
+    image_input_name: str = "image"
+    expected_output_keys: tuple[str, ...] = ("predictions",)
+    timeout_seconds: int = 20
+    max_retries: int = 2
+    retry_backoff_seconds: float = 1.0
+    image_output_directory: str = "roboflow_outputs"
+
+
+@dataclass(frozen=True)
 class EdgeConfig:
     """Root configuration container — aggregates all sub-configs."""
     camera: CameraConfig = field(default_factory=CameraConfig)
@@ -117,6 +132,7 @@ class EdgeConfig:
     api: ApiConfig = field(default_factory=ApiConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     pms: PmsConfig = field(default_factory=PmsConfig)
+    roboflow_workflow: RoboflowWorkflowConfig = field(default_factory=RoboflowWorkflowConfig)
 
 
 def load_config() -> EdgeConfig:
@@ -182,5 +198,25 @@ def load_config() -> EdgeConfig:
             timeout_seconds=int(os.getenv("PMS_BRIDGE_TIMEOUT", "5")),
             serial_number=os.getenv("PMS_BRIDGE_SERIAL", "RPI-123456"),
             software_version=os.getenv("PMS_BRIDGE_SOFTWARE_VERSION", "1.0.0"),
+        ),
+        roboflow_workflow=RoboflowWorkflowConfig(
+            enabled=os.getenv("ROBOFLOW_WORKFLOW_ENABLED", "false").lower() in ("true", "1", "yes"),
+            api_key=os.getenv("ROBOFLOW_API_KEY", ""),
+            api_url=os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com"),
+            workspace_name=os.getenv("ROBOFLOW_WORKSPACE_NAME", "les-workspace-ijdwd"),
+            workflow_id=os.getenv(
+                "ROBOFLOW_WORKFLOW_ID",
+                "evn-object-detection-vevn-object-detection-cnyo0-1-rfdetr-small-t1-logic",
+            ),
+            image_input_name=os.getenv("ROBOFLOW_IMAGE_INPUT_NAME", "image"),
+            expected_output_keys=tuple(
+                key.strip()
+                for key in os.getenv("ROBOFLOW_EXPECTED_OUTPUT_KEYS", "predictions").split(",")
+                if key.strip()
+            ),
+            timeout_seconds=int(os.getenv("ROBOFLOW_TIMEOUT_SECONDS", "20")),
+            max_retries=int(os.getenv("ROBOFLOW_MAX_RETRIES", "2")),
+            retry_backoff_seconds=float(os.getenv("ROBOFLOW_RETRY_BACKOFF_SECONDS", "1.0")),
+            image_output_directory=os.getenv("ROBOFLOW_IMAGE_OUTPUT_DIRECTORY", "roboflow_outputs"),
         ),
     )

@@ -1,30 +1,33 @@
 FROM python:3.12-slim
 
-# Install system dependencies required for OpenCV
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System libraries required by OpenCV, PyTorch, and video decoding paths.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
+    libgomp1 \
+    libsm6 \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy requirements first
 COPY requirements.txt .
 
-# Install PyTorch CPU first to avoid downloading ~3GB of CUDA dependencies (reduces size to ~200MB)
-RUN pip install --no-cache-dir torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+# CPU wheels keep the deploy image smaller and do not require NVIDIA runtime.
+RUN pip install torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Copy source code and models
 COPY edge/ /app/edge/
 COPY inference/ /app/inference/
 COPY models/ /app/models/
+COPY README.md README.docker.md /app/
 
-# Create alerts directory inside container
-RUN mkdir -p /app/alerts
+RUN mkdir -p /app/alerts /app/harness_runs /app/roboflow_outputs
 
-# Expose edge server port (default 8001)
 EXPOSE 8001
 
-# Run the edge service main script
 CMD ["python", "-m", "edge.main"]

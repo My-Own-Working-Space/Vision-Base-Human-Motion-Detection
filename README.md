@@ -150,6 +150,10 @@ cp .env.example .env
 The annotated AI video stream will be available at: **http://localhost:8001/video**
 The Edge Client Dashboard is at: **http://localhost:8001**
 
+### App Factory
+
+`edge.main` exposes `create_app(...)` and `compose_services(...)`. Importing `edge.main:app` creates an ASGI app only; model loading, alert retry workers, and PMS heartbeat workers start during FastAPI lifespan startup. Tests can inject fake services with `initialize_models=False` and `start_background_workers=False`.
+
 ### 4. API Endpoints (Edge Client)
 
 | Method | Path | Description |
@@ -157,6 +161,8 @@ The Edge Client Dashboard is at: **http://localhost:8001**
 | `GET` | `/` | System status, configurations, and Dashboard interface |
 | `GET` | `/video` | Live annotated MJPEG video stream |
 | `GET` | `/api/alerts-history` | Fetch local confirmed anomalies list from CSV logs |
+| `POST` | `/api/analyze` | Analyze one uploaded image or video and return detection JSON |
+| `POST` | `/api/analyze-batch` | Analyze multiple uploaded images/videos and return per-file detection JSON |
 
 ## Configuration Reference
 
@@ -171,6 +177,66 @@ The Edge Client Dashboard is at: **http://localhost:8001**
 | `ALERT_CONFIRMATION_FRAMES` | `3` | Consecutive anomaly frames to trigger dispatch |
 | `ALERT_COOLDOWN_SECONDS` | `60.0` | Mute duplicate alerts after confirmation |
 | `DASHBOARD_API_URL` | `http://localhost:8000` | Backend API URL |
+
+## Harness Engineering Runtime
+
+This repo now includes a provider-independent harness architecture alongside the existing edge camera service. It is designed around explicit runtime, loop, context, prompt, tool, provider, memory, and observability boundaries. The first vertical slice runs offline with a deterministic fake vision provider; it does not require Roboflow, internet access, MCP, camera access, or model weights.
+
+Run the local fake-provider harness on a representative alert image:
+
+```bash
+./.venv/bin/python -m edge.cli.run_fake_harness alerts/alert_track_2_20260526_172904_540897.jpg
+```
+
+Run the offline harness tests:
+
+```bash
+./.venv/bin/python -m unittest discover -s tests -v
+```
+
+Harness checkpoints and traces are written under `harness_runs/`, which is ignored by git. Fake-provider results include `FAKE_RESULT_DO_NOT_TREAT_AS_MODEL_INFERENCE` and must not be interpreted as real model output.
+
+Architecture docs:
+
+- `docs/harness-architecture-audit.md`
+- `docs/harness-refactor-plan.md`
+- `docs/roboflow-integration-status.md`
+
+## Roboflow Workflow Integration
+
+This repo includes a focused client for the published Roboflow Workflow:
+
+- Workspace: `les-workspace-ijdwd`
+- Workflow: `evn-object-detection-vevn-object-detection-cnyo0-1-rfdetr-small-t1-logic`
+- Endpoint: `https://serverless.roboflow.com/les-workspace-ijdwd/workflows/evn-object-detection-vevn-object-detection-cnyo0-1-rfdetr-small-t1-logic`
+
+The workflow definition was grounded through Roboflow MCP on 2026-07-19. It declares one image input named `image`, no runtime parameters, and one JSON output named `predictions`.
+
+Configure `.env` with:
+
+```bash
+ROBOFLOW_API_KEY=your_private_api_key
+ROBOFLOW_WORKFLOW_ENABLED=true
+```
+
+Run the smoke test:
+
+```bash
+./.venv/bin/python smoke_roboflow_workflow.py
+```
+
+Use the client from Python:
+
+```python
+from edge.clients.roboflow_workflow_client import RoboflowWorkflowClient
+from edge.config import load_config
+
+client = RoboflowWorkflowClient(load_config().roboflow_workflow)
+result = client.run_evn_object_detection("https://example.com/image.jpg")
+predictions = result.outputs["predictions"]
+```
+
+Image-shaped workflow outputs are decoded to `ROBOFLOW_IMAGE_OUTPUT_DIRECTORY` and are not logged. The current published workflow returned a Roboflow server-side configuration error during MCP verification on 2026-07-19: the inner workflow step binds `model_id`, but the child workflow does not declare that input. Republish or fix the workflow in Roboflow before expecting the smoke test to pass.
 
 ## State Machine (Alert Confirmation Flow)
 

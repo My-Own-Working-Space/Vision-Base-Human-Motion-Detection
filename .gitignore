@@ -26,4 +26,5 @@ Thumbs.db
 
 # Runtime outputs
 alerts/
-
+roboflow_outputs/
+harness_runs/
